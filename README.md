@@ -454,3 +454,4 @@ For issues related to:
 - **This MCP Server**: [Open an issue](https://github.com/deapi-ai/mcp-server-deapi/issues)
 - **deAPI Platform**: Visit [docs.deapi.ai](https://docs.deapi.ai/)
 - **MCP Protocol**: Visit [modelcontextprotocol.io](https://modelcontextprotocol.io)
+<!-- mcp-name: io.github.deapi-ai/mcp-server-deapi -->
