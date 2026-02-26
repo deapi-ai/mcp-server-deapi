@@ -19,7 +19,7 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 - `audio_transcription_price` - Calculate transcription cost
 - `text_to_audio` - Convert text to natural speech (TTS)
 - `text_to_audio_price` - Calculate TTS cost
-- `audio_url_transcription` - Transcribe audio from Twitter Spaces URLs
+- `audio_url_transcription` - Transcribe audio from URLs of completed Twitter Spaces
 - `audio_url_transcription_price` - Calculate Twitter Spaces transcription cost
 
 ### Video Transcription Tools
@@ -64,7 +64,7 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 - `uv`, `pip`, or `conda` for package management
 
 **For a deAPI account:**
-- Sign up at [api.deapi.ai](https://api.deapi.ai) and get your API token
+- Sign up at [deapi.ai](https://deapi.ai/settings/api-keys) and get your API token
 
 ### Setup
 
@@ -134,7 +134,7 @@ See the [Remote Deployment](#remote-deployment) section for production deploymen
 
 Both Claude Desktop and Claude.ai support MCP connectors with built-in OAuth authentication.
 
-1. Get your deAPI token from [api.deapi.ai](https://api.deapi.ai)
+1. Get your deAPI token from [deapi.ai](https://deapi.ai/settings/api-keys)
 2. In Claude Desktop or Claude.ai, go to **Settings → Connectors → Add Connector**
 3. Fill in the connector details:
 
@@ -217,7 +217,7 @@ Use audio_transcription with:
 - **Schemas** (`src/schemas.py`): Pydantic models for type safety
 - **Tools** (`src/tools/`): Organized tool implementations
   - `audio.py` - Audio transcription & TTS tools
-  - `image.py` - Image generation, OCR, background removal & upscaling
+  - `image.py` - Image generation, transformation, OCR, background removal & upscaling
   - `video.py` - Video generation tools
   - `embedding.py` - Text embedding tools
   - `utility.py` - Balance, models, status tools
