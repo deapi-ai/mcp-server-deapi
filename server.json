@@ -11,7 +11,20 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://mcp.deapi.ai/mcp"
+      "url": "https://mcp.deapi.ai/mcp",
+      "variables": {
+        "oauth_client_id": {
+          "description": "OAuth Client ID",
+          "value": "deapi-mcp"
+        },
+        "oauth_client_secret": {
+          "description": "Your deAPI API key (get it at https://deapi.ai/settings/api-keys)",
+          "isSecret": true,
+          "isRequired": true,
+          "format": "string",
+          "placeholder": "<number>|<hash>"
+        }
+      }
     }
   ]
 }
