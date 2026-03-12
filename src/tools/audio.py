@@ -206,7 +206,7 @@ async def text_to_audio_price(
 
 
 async def video_file_transcription(
-    video: Annotated[str, Field(description="Video file as data URI (data:video/mp4;base64,...) or base64 string. IMPORTANT: Pass the video directly without displaying or printing the base64 data.")],
+    video: Annotated[str, Field(description="Video file as URL (preferred), data URI (data:video/mp4;base64,...), or base64 string. URLs are recommended to avoid base64 context bloat.")],
     include_ts: Annotated[bool, Field(description="Include timestamps in transcription")],
     model: Annotated[str, Field(description="Whisper model (e.g., 'whisper-3-large')")] = "WhisperLargeV3",
     return_result_in_response: Annotated[bool, Field(description="Return transcription inline. Set to False for large files to get download URL instead")] = True,
@@ -214,7 +214,7 @@ async def video_file_transcription(
     """Transcribe video file to text using Whisper models.
 
     Extracts audio from video and converts it to text transcription with optional timestamps.
-    Accepts video files as data URIs (from Claude Desktop attachments) or base64 strings.
+    Accepts video files as URLs (preferred), data URIs, or base64 strings.
     Automatically polls until transcription is complete.
 
     Returns:
@@ -378,6 +378,127 @@ async def video_url_transcription_price(
             price_response = await client.calculate_price(
                 endpoint="vid2txt/price-calculation",
                 json_data=request_data,
+            )
+
+            return {"success": True, "price": price_response.get("data", {})}
+
+    except DeapiAPIError as e:
+        return {"success": False, "error": f"API error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+async def text_to_music(
+    caption: Annotated[str, Field(description="Text description of the music to generate (max 5000 chars)")],
+    model: Annotated[str, Field(description="Music generation model name (must support txt2music inference type)")],
+    lyrics: Annotated[str, Field(description="Song lyrics (max 10000 chars). Use '[Instrumental]' for no vocals")],
+    duration: Annotated[int, Field(ge=10, le=600, description="Audio duration in seconds (10-600, further constrained by model limits)")],
+    inference_steps: Annotated[int, Field(ge=1, le=100, description="Number of inference steps (1-100). Use 8 for turbo, 32+ for base models")],
+    guidance_scale: Annotated[float, Field(ge=0.0, le=20.0, description="Guidance scale (0-20, constrained by model limits)")],
+    seed: Annotated[int, Field(description="Random seed (-1 for random)")] = -1,
+    audio_format: Annotated[str, Field(description="Output format: 'wav', 'flac', or 'mp3'")] = "wav",
+    bpm: Annotated[Optional[int], Field(ge=30, le=300, description="Beats per minute (30-300, optional)")] = None,
+    keyscale: Annotated[Optional[str], Field(description="Musical key/scale, e.g. 'C major', 'F# minor' (optional)")] = None,
+    timesignature: Annotated[Optional[int], Field(description="Time signature: 2, 3, 4, or 6 (optional)")] = None,
+    vocal_language: Annotated[Optional[str], Field(description="Vocal language code, e.g. 'en', 'es' (optional)")] = None,
+    reference_audio: Annotated[Optional[str], Field(description="Reference audio for style transfer (URL, data URI, or base64). Duration must be within model's ref audio limits (typically 3-10s)")] = None,
+) -> dict:
+    """Generate music from text description and lyrics.
+
+    Creates music tracks from text prompts with customizable parameters including
+    tempo, key, time signature, and optional style reference audio.
+
+    IMPORTANT: Check model specifications using get_available_models() before calling.
+    Pay attention to model limits for duration, inference_steps, guidance_scale, and bpm.
+
+    Returns:
+        dict: Contains 'success', 'result_url' with audio URL, 'job_id'
+    """
+    try:
+        client = get_client()
+        async with client:
+            form_data = {
+                "caption": caption,
+                "model": model,
+                "lyrics": lyrics,
+                "duration": str(duration),
+                "inference_steps": str(inference_steps),
+                "guidance_scale": str(guidance_scale),
+                "seed": str(seed),
+                "format": audio_format,
+            }
+
+            if bpm is not None:
+                form_data["bpm"] = str(bpm)
+            if keyscale is not None:
+                form_data["keyscale"] = keyscale
+            if timesignature is not None:
+                form_data["timesignature"] = str(timesignature)
+            if vocal_language is not None:
+                form_data["vocal_language"] = vocal_language
+
+            files = {}
+            if reference_audio:
+                field_name, file_tuple = await prepare_audio_upload_async(
+                    reference_audio, "reference_audio"
+                )
+                files[field_name] = file_tuple
+
+            job_response = await client.submit_job(
+                endpoint="txt2music",
+                data=form_data,
+                files=files if files else None,
+            )
+            job_id = job_response.data.request_id
+
+            polling_manager = PollingManager(client, job_type="audio")
+            result = await polling_manager.poll_until_complete(job_id)
+
+            if result.success:
+                return {
+                    "success": True,
+                    "result_url": result.result_url,
+                    "job_id": job_id,
+                    "metadata": result.metadata,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.error,
+                    "job_id": job_id,
+                }
+
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid audio format: {str(e)}"}
+    except DeapiAPIError as e:
+        return {"success": False, "error": f"API error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+async def text_to_music_price(
+    model: Annotated[str, Field(description="Music generation model name")],
+    duration: Annotated[Optional[int], Field(ge=10, le=600, description="Audio duration in seconds")] = None,
+    inference_steps: Annotated[Optional[int], Field(ge=1, le=100, description="Number of inference steps")] = None,
+) -> dict:
+    """Calculate price for text-to-music generation.
+
+    Returns:
+        dict: Contains 'success' and 'price' information
+    """
+    try:
+        client = get_client()
+        async with client:
+            form_data = {"model": model}
+
+            if duration is not None:
+                form_data["duration"] = str(duration)
+            if inference_steps is not None:
+                form_data["inference_steps"] = str(inference_steps)
+
+            price_response = await client.calculate_price(
+                endpoint="txt2music/price-calculation",
+                data=form_data,
             )
 
             return {"success": True, "price": price_response.get("data", {})}

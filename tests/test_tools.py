@@ -585,6 +585,48 @@ class TestErrorHandling:
         assert "Invalid video format" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_text_to_music_invalid_reference_audio(self):
+        """text_to_music should catch ValueError from bad reference audio."""
+        mock_client = make_mock_client()
+
+        with patch("src.tools.audio.get_client", return_value=mock_client):
+            from src.tools.audio import text_to_music
+
+            result = await text_to_music(
+                caption="upbeat pop song",
+                model="test-music-model",
+                lyrics="[Instrumental]",
+                duration=30,
+                inference_steps=32,
+                guidance_scale=3.5,
+                reference_audio="not-valid-base64!!!",
+            )
+
+        assert result["success"] is False
+        assert "Invalid audio format" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_audio_to_video_invalid_audio(self):
+        """audio_to_video should catch ValueError from bad audio input."""
+        mock_client = make_mock_client()
+
+        with patch("src.tools.video.get_client", return_value=mock_client):
+            from src.tools.video import audio_to_video
+
+            result = await audio_to_video(
+                prompt="music video",
+                model="test-model",
+                audio="not-valid-base64!!!",
+                width=512,
+                height=512,
+                frames=120,
+                fps=30,
+            )
+
+        assert result["success"] is False
+        assert "Invalid file format" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_embedding_api_error(self):
         """text_to_embedding should catch DeapiAPIError."""
         mock_client = make_mock_client()
@@ -598,3 +640,407 @@ class TestErrorHandling:
 
         assert result["success"] is False
         assert "API error" in result["error"]
+
+
+# =============================================================================
+# NEW TOOL: text_to_music
+# =============================================================================
+
+
+class TestTextToMusic:
+    @pytest.mark.asyncio
+    async def test_sends_multipart_to_correct_endpoint(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.audio.get_client", return_value=mock_client), \
+             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+            from src.tools.audio import text_to_music
+
+            result = await text_to_music(
+                caption="upbeat pop song",
+                model="test-music-model",
+                lyrics="La la la",
+                duration=30,
+                inference_steps=32,
+                guidance_scale=3.5,
+                seed=42,
+                audio_format="wav",
+            )
+
+        assert result["success"] is True
+        assert result["result_url"] == "https://result.url/file"
+        assert result["job_id"] == "test-job-id-123"
+
+        call_kwargs = mock_client.submit_job.call_args.kwargs
+        assert call_kwargs["endpoint"] == "txt2music"
+        assert "data" in call_kwargs
+        form_data = call_kwargs["data"]
+        assert form_data["caption"] == "upbeat pop song"
+        assert form_data["model"] == "test-music-model"
+        assert form_data["lyrics"] == "La la la"
+        assert form_data["duration"] == "30"
+        assert form_data["inference_steps"] == "32"
+        assert form_data["guidance_scale"] == "3.5"
+        assert form_data["seed"] == "42"
+        assert form_data["format"] == "wav"
+
+    @pytest.mark.asyncio
+    async def test_optional_params_included_when_set(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.audio.get_client", return_value=mock_client), \
+             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+            from src.tools.audio import text_to_music
+
+            await text_to_music(
+                caption="jazz tune",
+                model="test",
+                lyrics="[Instrumental]",
+                duration=60,
+                inference_steps=8,
+                guidance_scale=0.0,
+                bpm=120,
+                keyscale="C major",
+                timesignature=4,
+                vocal_language="en",
+            )
+
+        form_data = mock_client.submit_job.call_args.kwargs["data"]
+        assert form_data["bpm"] == "120"
+        assert form_data["keyscale"] == "C major"
+        assert form_data["timesignature"] == "4"
+        assert form_data["vocal_language"] == "en"
+
+    @pytest.mark.asyncio
+    async def test_optional_params_omitted_when_none(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.audio.get_client", return_value=mock_client), \
+             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+            from src.tools.audio import text_to_music
+
+            await text_to_music(
+                caption="test",
+                model="test",
+                lyrics="test",
+                duration=10,
+                inference_steps=8,
+                guidance_scale=0.0,
+            )
+
+        form_data = mock_client.submit_job.call_args.kwargs["data"]
+        assert "bpm" not in form_data
+        assert "keyscale" not in form_data
+        assert "timesignature" not in form_data
+        assert "vocal_language" not in form_data
+
+    @pytest.mark.asyncio
+    async def test_no_files_when_no_reference_audio(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.audio.get_client", return_value=mock_client), \
+             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+            from src.tools.audio import text_to_music
+
+            await text_to_music(
+                caption="test",
+                model="test",
+                lyrics="test",
+                duration=10,
+                inference_steps=8,
+                guidance_scale=0.0,
+            )
+
+        call_kwargs = mock_client.submit_job.call_args.kwargs
+        # files should be None when no reference_audio
+        assert call_kwargs.get("files") is None
+
+    @pytest.mark.asyncio
+    async def test_reference_audio_sent_as_file(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.audio.get_client", return_value=mock_client), \
+             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+            from src.tools.audio import text_to_music
+
+            await text_to_music(
+                caption="test",
+                model="test",
+                lyrics="test",
+                duration=10,
+                inference_steps=8,
+                guidance_scale=0.0,
+                reference_audio=make_base64_audio(),
+            )
+
+        call_kwargs = mock_client.submit_job.call_args.kwargs
+        assert call_kwargs["files"] is not None
+        assert "reference_audio" in call_kwargs["files"]
+
+    @pytest.mark.asyncio
+    async def test_uses_audio_polling_type(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling_cls = MagicMock()
+        mock_polling_instance = MagicMock()
+        mock_polling_instance.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+        mock_polling_cls.return_value = mock_polling_instance
+
+        with patch("src.tools.audio.get_client", return_value=mock_client), \
+             patch("src.tools.audio.PollingManager", mock_polling_cls):
+            from src.tools.audio import text_to_music
+
+            await text_to_music(
+                caption="test", model="test", lyrics="test",
+                duration=10, inference_steps=8, guidance_scale=0.0,
+            )
+
+        mock_polling_cls.assert_called_once_with(mock_client, job_type="audio")
+
+
+class TestTextToMusicPrice:
+    @pytest.mark.asyncio
+    async def test_correct_endpoint_and_form_data(self):
+        mock_client = make_mock_client()
+
+        with patch("src.tools.audio.get_client", return_value=mock_client):
+            from src.tools.audio import text_to_music_price
+
+            result = await text_to_music_price(
+                model="test-music-model",
+                duration=60,
+                inference_steps=32,
+            )
+
+        assert result["success"] is True
+        assert "price" in result
+
+        call_kwargs = mock_client.calculate_price.call_args.kwargs
+        assert call_kwargs["endpoint"] == "txt2music/price-calculation"
+        form_data = call_kwargs["data"]
+        assert form_data["model"] == "test-music-model"
+        assert form_data["duration"] == "60"
+        assert form_data["inference_steps"] == "32"
+
+    @pytest.mark.asyncio
+    async def test_optional_params(self):
+        mock_client = make_mock_client()
+
+        with patch("src.tools.audio.get_client", return_value=mock_client):
+            from src.tools.audio import text_to_music_price
+
+            # Without optional params
+            await text_to_music_price(model="test")
+            form_data = mock_client.calculate_price.call_args.kwargs["data"]
+            assert "duration" not in form_data
+            assert "inference_steps" not in form_data
+
+
+# =============================================================================
+# NEW TOOL: audio_to_video
+# =============================================================================
+
+
+class TestAudioToVideo:
+    @pytest.mark.asyncio
+    async def test_sends_multipart_to_correct_endpoint(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.video.get_client", return_value=mock_client), \
+             patch("src.tools.video.PollingManager", return_value=mock_polling):
+            from src.tools.video import audio_to_video
+
+            result = await audio_to_video(
+                prompt="music video",
+                model="test-aud2vid-model",
+                audio=make_base64_audio(),
+                width=768,
+                height=512,
+                frames=120,
+                fps=30,
+                seed=42,
+            )
+
+        assert result["success"] is True
+        assert result["result_url"] == "https://result.url/file"
+        assert result["job_id"] == "test-job-id-123"
+
+        call_kwargs = mock_client.submit_job.call_args.kwargs
+        assert call_kwargs["endpoint"] == "aud2video"
+        assert "data" in call_kwargs
+        assert "files" in call_kwargs
+
+        form_data = call_kwargs["data"]
+        assert form_data["prompt"] == "music video"
+        assert form_data["model"] == "test-aud2vid-model"
+        assert form_data["width"] == "768"
+        assert form_data["height"] == "512"
+        assert form_data["frames"] == "120"
+        assert form_data["fps"] == "30"
+        assert form_data["seed"] == "42"
+
+        # Audio file must be present
+        assert "audio" in call_kwargs["files"]
+
+    @pytest.mark.asyncio
+    async def test_optional_params_included_when_set(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.video.get_client", return_value=mock_client), \
+             patch("src.tools.video.PollingManager", return_value=mock_polling):
+            from src.tools.video import audio_to_video
+
+            await audio_to_video(
+                prompt="test",
+                model="test",
+                audio=make_base64_audio(),
+                width=512,
+                height=512,
+                frames=60,
+                fps=24,
+                negative_prompt="blurry",
+                guidance=7.5,
+                steps=20,
+            )
+
+        form_data = mock_client.submit_job.call_args.kwargs["data"]
+        assert form_data["negative_prompt"] == "blurry"
+        assert form_data["guidance"] == "7.5"
+        assert form_data["steps"] == "20"
+
+    @pytest.mark.asyncio
+    async def test_optional_params_omitted_when_none(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.video.get_client", return_value=mock_client), \
+             patch("src.tools.video.PollingManager", return_value=mock_polling):
+            from src.tools.video import audio_to_video
+
+            await audio_to_video(
+                prompt="test",
+                model="test",
+                audio=make_base64_audio(),
+                width=512,
+                height=512,
+                frames=60,
+                fps=24,
+            )
+
+        form_data = mock_client.submit_job.call_args.kwargs["data"]
+        assert "negative_prompt" not in form_data
+        assert "guidance" not in form_data
+        assert "steps" not in form_data
+
+    @pytest.mark.asyncio
+    async def test_frame_images_sent_as_files(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.video.get_client", return_value=mock_client), \
+             patch("src.tools.video.PollingManager", return_value=mock_polling):
+            from src.tools.video import audio_to_video
+
+            await audio_to_video(
+                prompt="test",
+                model="test",
+                audio=make_base64_audio(),
+                width=512,
+                height=512,
+                frames=60,
+                fps=24,
+                first_frame_image=make_base64_image(),
+                last_frame_image=make_base64_image(),
+            )
+
+        files = mock_client.submit_job.call_args.kwargs["files"]
+        assert "audio" in files
+        assert "first_frame_image" in files
+        assert "last_frame_image" in files
+
+    @pytest.mark.asyncio
+    async def test_uses_video_polling_type(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling_cls = MagicMock()
+        mock_polling_instance = MagicMock()
+        mock_polling_instance.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+        mock_polling_cls.return_value = mock_polling_instance
+
+        with patch("src.tools.video.get_client", return_value=mock_client), \
+             patch("src.tools.video.PollingManager", mock_polling_cls):
+            from src.tools.video import audio_to_video
+
+            await audio_to_video(
+                prompt="test", model="test", audio=make_base64_audio(),
+                width=512, height=512, frames=60, fps=24,
+            )
+
+        mock_polling_cls.assert_called_once_with(mock_client, job_type="video")
+
+
+class TestAudioToVideoPrice:
+    @pytest.mark.asyncio
+    async def test_correct_endpoint(self):
+        mock_client = make_mock_client()
+
+        with patch("src.tools.video.get_client", return_value=mock_client):
+            from src.tools.video import audio_to_video_price
+
+            result = await audio_to_video_price(
+                model="test-model",
+                width=768,
+                height=512,
+                frames=120,
+                steps=20,
+                fps=30,
+            )
+
+        assert result["success"] is True
+        assert "price" in result
+
+        call_kwargs = mock_client.calculate_price.call_args.kwargs
+        assert call_kwargs["endpoint"] == "aud2video/price-calculation"
+        json_data = call_kwargs["json_data"]
+        assert json_data["model"] == "test-model"
+        assert json_data["width"] == 768
+        assert json_data["height"] == 512
+        assert json_data["frames"] == 120
+
+    @pytest.mark.asyncio
+    async def test_seed_and_guidance_excluded(self):
+        mock_client = make_mock_client()
+
+        with patch("src.tools.video.get_client", return_value=mock_client):
+            from src.tools.video import audio_to_video_price
+
+            await audio_to_video_price(model="test", width=512, height=512, frames=60)
+
+        json_data = mock_client.calculate_price.call_args.kwargs["json_data"]
+        assert "seed" not in json_data
+        assert "guidance" not in json_data
