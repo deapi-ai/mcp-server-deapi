@@ -100,7 +100,8 @@ async def image_to_image(
     """Transform an existing image using a text prompt.
 
     Modifies images based on text descriptions. Useful for style transfer and editing.
-    Accepts images as data URIs (from Claude Desktop attachments) or base64 strings.
+    Accepts images as URLs (preferred), data URIs (data:image/...;base64,...), or base64 strings.
+    When a URL is available (e.g., from a previous text_to_image result), always prefer passing the URL directly.
 
     Returns:
         dict: Contains 'success', 'result_url', 'job_id', and metadata

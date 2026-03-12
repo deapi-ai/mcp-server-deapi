@@ -32,7 +32,9 @@ INFERENCE_TYPE_TO_TOOLS: Dict[str, List[str]] = {
     "img2img": ["image_to_image", "image_to_image_price"],
     "txt2video": ["text_to_video", "text_to_video_price"],
     "img2video": ["image_to_video", "image_to_video_price"],
+    "audio2video": ["audio_to_video", "audio_to_video_price"],
     "txt2audio": ["text_to_audio", "text_to_audio_price"],
+    "txt2music": ["text_to_music", "text_to_music_price"],
     "txt2embedding": ["text_to_embedding", "text_to_embedding_price"],
     "audio_file2text": ["audio_transcription", "audio_transcription_price"],
     "audio2text": ["audio_url_transcription", "audio_url_transcription_price"],
@@ -149,6 +151,18 @@ def _format_model_info(model: ModelInfo) -> str:
     max_frames = limits.get("max_frames")
     if min_frames is not None and max_frames is not None:
         parts.append(f"frames={min_frames}-{max_frames}")
+
+    # Duration (music models)
+    min_dur = limits.get("min_duration")
+    max_dur = limits.get("max_duration")
+    if min_dur is not None and max_dur is not None:
+        parts.append(f"duration={min_dur}-{max_dur}s")
+
+    # BPM (music models)
+    min_bpm = limits.get("min_bpm")
+    max_bpm = limits.get("max_bpm")
+    if min_bpm is not None and max_bpm is not None:
+        parts.append(f"bpm={min_bpm}-{max_bpm}")
 
     # LoRAs
     if model.loras:

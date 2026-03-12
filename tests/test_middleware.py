@@ -136,6 +136,24 @@ class TestFormatModelInfo:
         result = _format_model_info(model)
         assert "2 LoRAs available" in result
 
+    def test_music_model_with_duration_and_bpm(self):
+        model = make_model("MusicGen", ["txt2music"], info={
+            "limits": {
+                "min_steps": 8, "max_steps": 100,
+                "min_duration": 10, "max_duration": 300,
+                "min_bpm": 60, "max_bpm": 200,
+                "min_guidance": 0, "max_guidance": 15,
+            },
+            "defaults": {"steps": "32", "guidance": "3.5"},
+            "features": {"supports_guidance": "1"},
+        })
+        result = _format_model_info(model)
+        assert "`MusicGen`" in result
+        assert "duration=10-300s" in result
+        assert "bpm=60-200" in result
+        assert "steps=8-100" in result
+        assert "guidance=0-15" in result
+
     def test_model_with_empty_sub_dicts(self):
         model = make_model("Bare", ["txt2img"], info={
             "limits": {},
@@ -499,7 +517,7 @@ class TestInferenceTypeMapping:
     def test_expected_inference_types_present(self):
         expected = [
             "txt2img", "img2img", "txt2video", "img2video",
-            "txt2audio", "txt2embedding",
+            "audio2video", "txt2audio", "txt2music", "txt2embedding",
             "audio_file2text", "audio2text",
             "video2text", "video_file2text",
             "img2txt", "img-rmbg", "img-upscale",
