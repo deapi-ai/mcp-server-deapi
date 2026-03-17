@@ -18,6 +18,8 @@ from .tools.audio import (
     audio_url_transcription_price,
     text_to_audio,
     text_to_audio_price,
+    text_to_music,
+    text_to_music_price,
     video_file_transcription,
     video_file_transcription_price,
     video_url_transcription,
@@ -38,6 +40,8 @@ from .tools.image import (
 from .tools.embedding import text_to_embedding, text_to_embedding_price
 from .tools.utility import check_job_status, get_available_models, get_balance
 from .tools.video import (
+    audio_to_video,
+    audio_to_video_price,
     image_to_video,
     image_to_video_price,
     text_to_video,
@@ -59,8 +63,10 @@ mcp = FastMCP(name="deAPI AI API", auth=None)
 
 mcp.tool()(audio_transcription)
 mcp.tool()(text_to_audio)
+mcp.tool()(text_to_music)
 mcp.tool()(audio_transcription_price)
 mcp.tool()(text_to_audio_price)
+mcp.tool()(text_to_music_price)
 
 # Audio URL transcription (Twitter Spaces)
 mcp.tool()(audio_url_transcription)
@@ -95,8 +101,10 @@ mcp.tool()(image_upscale_price)
 
 mcp.tool()(text_to_video)
 mcp.tool()(image_to_video)
+mcp.tool()(audio_to_video)
 mcp.tool()(image_to_video_price)
 mcp.tool()(text_to_video_price)
+mcp.tool()(audio_to_video_price)
 # video_remove_background and video_upscale not yet implemented in API (no models deployed)
 # mcp.tool()(video_remove_background)
 # mcp.tool()(video_remove_background_price)

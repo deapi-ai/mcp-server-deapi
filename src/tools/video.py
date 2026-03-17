@@ -6,7 +6,7 @@ from pydantic import Field
 
 from ..deapi_client import get_client, DeapiAPIError
 from ..polling_manager import PollingManager
-from ..utils import prepare_image_upload_async, prepare_video_upload_async
+from ..utils import prepare_audio_upload_async, prepare_image_upload_async, prepare_video_upload_async
 from ._price_helpers import resolve_generation_params
 
 
@@ -254,6 +254,144 @@ async def text_to_video_price(
 
             price_response = await client.calculate_price(
                 endpoint="txt2video/price-calculation",
+                json_data=request_data,
+            )
+
+            return {"success": True, "price": price_response.get("data", {})}
+
+    except DeapiAPIError as e:
+        return {"success": False, "error": f"API error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+async def audio_to_video(
+    prompt: Annotated[str, Field(description="Text prompt for video generation")],
+    model: Annotated[str, Field(description="Video generation model name (must support audio2video inference type)")],
+    audio: Annotated[str, Field(description="Audio file as URL, data URI (data:audio/mpeg;base64,...), or base64 string. Conditions the video generation on the audio content")],
+    width: Annotated[int, Field(ge=64, le=2048, description="Video width in pixels (constrained by model limits)")],
+    height: Annotated[int, Field(ge=64, le=2048, description="Video height in pixels (constrained by model limits)")],
+    frames: Annotated[int, Field(ge=1, le=200, description="Number of video frames (constrained by model limits)")],
+    fps: Annotated[int, Field(ge=1, le=60, description="Frames per second (constrained by model limits)")],
+    seed: Annotated[int, Field(description="Random seed (-1 for random)")] = -1,
+    negative_prompt: Annotated[Optional[str], Field(description="Things to exclude (optional)")] = None,
+    guidance: Annotated[Optional[float], Field(ge=0.0, le=20.0, description="Guidance scale. Only used if model's features.supports_guidance is true")] = None,
+    steps: Annotated[Optional[int], Field(ge=1, le=100, description="Inference steps. Only used if model's features.supports_steps is true")] = None,
+    first_frame_image: Annotated[Optional[str], Field(description="First frame anchor image (URL, data URI, or base64, optional)")] = None,
+    last_frame_image: Annotated[Optional[str], Field(description="Last frame anchor image (URL, data URI, or base64, optional)")] = None,
+) -> dict:
+    """Generate video from audio and text prompt.
+
+    Creates videos conditioned on audio content. The audio drives the video generation,
+    allowing synchronized audio-visual output. Optionally accepts anchor frame images.
+
+    IMPORTANT: Check model specifications using get_available_models() before calling.
+    Pay attention to features.supports_guidance, features.supports_steps, and model limits.
+
+    Returns:
+        dict: Contains 'success', 'result_url' with video URL, 'job_id'
+    """
+    try:
+        client = get_client()
+        async with client:
+            # Prepare audio file upload (required)
+            audio_field, audio_tuple = await prepare_audio_upload_async(audio, "audio")
+            files = {audio_field: audio_tuple}
+
+            # Prepare optional frame images
+            if first_frame_image:
+                ff_field, ff_tuple = await prepare_image_upload_async(
+                    first_frame_image, "first_frame_image"
+                )
+                files[ff_field] = ff_tuple
+            if last_frame_image:
+                lf_field, lf_tuple = await prepare_image_upload_async(
+                    last_frame_image, "last_frame_image"
+                )
+                files[lf_field] = lf_tuple
+
+            form_data = {
+                "prompt": prompt,
+                "model": model,
+                "width": str(width),
+                "height": str(height),
+                "frames": str(frames),
+                "fps": str(fps),
+                "seed": str(seed),
+            }
+
+            if negative_prompt:
+                form_data["negative_prompt"] = negative_prompt
+            if guidance is not None:
+                form_data["guidance"] = str(guidance)
+            if steps is not None:
+                form_data["steps"] = str(steps)
+
+            job_response = await client.submit_job(
+                endpoint="aud2video",
+                data=form_data,
+                files=files,
+            )
+            job_id = job_response.data.request_id
+
+            polling_manager = PollingManager(client, job_type="video")
+            result = await polling_manager.poll_until_complete(job_id)
+
+            if result.success:
+                return {
+                    "success": True,
+                    "result_url": result.result_url,
+                    "job_id": job_id,
+                    "metadata": result.metadata,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.error,
+                    "job_id": job_id,
+                }
+
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid file format: {str(e)}"}
+    except DeapiAPIError as e:
+        return {"success": False, "error": f"API error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+async def audio_to_video_price(
+    model: Annotated[str, Field(description="Video generation model name")],
+    width: Annotated[Optional[int], Field(ge=64, le=2048, description="Video width in pixels")] = None,
+    height: Annotated[Optional[int], Field(ge=64, le=2048, description="Video height in pixels")] = None,
+    frames: Annotated[Optional[int], Field(ge=1, le=200, description="Number of video frames")] = None,
+    steps: Annotated[Optional[int], Field(ge=1, le=100, description="Number of inference steps (optional)")] = None,
+    fps: Annotated[Optional[int], Field(ge=1, le=60, description="Frames per second (optional)")] = None,
+) -> dict:
+    """Calculate price for audio-to-video generation.
+
+    Returns:
+        dict: Contains 'success' and 'price' information
+    """
+    try:
+        client = get_client()
+        async with client:
+            params = resolve_generation_params(model, {
+                "width": width,
+                "height": height,
+                "frames": frames,
+                "steps": steps,
+                "fps": fps,
+            })
+            request_data = {
+                "model": model,
+                **params,
+            }
+            # seed and guidance not required for video price calc
+            request_data.pop("seed", None)
+            request_data.pop("guidance", None)
+
+            price_response = await client.calculate_price(
+                endpoint="aud2video/price-calculation",
                 json_data=request_data,
             )
 
