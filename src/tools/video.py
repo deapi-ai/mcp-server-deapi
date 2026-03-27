@@ -403,6 +403,122 @@ async def audio_to_video_price(
         return {"success": False, "error": f"Unexpected error: {str(e)}"}
 
 
+async def video_replace(
+    video: Annotated[str, Field(description="Video as URL, data URI (data:video/mp4;base64,...), or base64 string. URLs are recommended to avoid base64 context bloat.")],
+    ref_image: Annotated[str, Field(description="Reference image of the character to replace into the video as URL (e.g., from text_to_image result), data URI (data:image/png;base64,...), or base64 string. URLs are recommended to avoid base64 context bloat.")],
+    model: Annotated[str, Field(description="Video replace model name (must support VideoReplace inference type)")],
+    prompt: Annotated[Optional[str], Field(description="Text prompt to guide the replacement (optional)")] = None,
+    width: Annotated[Optional[int], Field(ge=64, le=2048, description="Output video width in pixels (optional, defaults to native video width)")] = None,
+    height: Annotated[Optional[int], Field(ge=64, le=2048, description="Output video height in pixels (optional, defaults to native video height)")] = None,
+    steps: Annotated[int, Field(ge=1, le=100, description="Number of inference steps")] = 4,
+    seed: Annotated[int, Field(description="Random seed (-1 for random)")] = -1,
+) -> dict:
+    """Replace a person in a video with the character from a reference image.
+
+    Performs AI-powered character replacement — takes an input video and a reference
+    image, and replaces the person in the video with the character from the image.
+
+    IMPORTANT: Check model specifications using get_available_models() before calling.
+    Pay attention to limits for width/height, max_video_duration_seconds, and steps.
+
+    Returns:
+        dict: Contains 'success', 'result_url' with processed video URL, 'job_id'
+    """
+    try:
+        client = get_client()
+        async with client:
+            # Prepare video file upload (required)
+            video_field, video_tuple = await prepare_video_upload_async(video, "video")
+            files = {video_field: video_tuple}
+
+            # Prepare reference image upload (required)
+            ref_field, ref_tuple = await prepare_image_upload_async(ref_image, "ref_image")
+            files[ref_field] = ref_tuple
+
+            form_data = {
+                "model": model,
+                "steps": str(steps),
+                "seed": str(seed),
+            }
+
+            if prompt:
+                form_data["prompt"] = prompt
+            if width is not None:
+                form_data["width"] = str(width)
+            if height is not None:
+                form_data["height"] = str(height)
+
+            job_response = await client.submit_job(
+                endpoint="videos/replace",
+                data=form_data,
+                files=files,
+            )
+            job_id = job_response.data.request_id
+
+            polling_manager = PollingManager(client, job_type="video")
+            result = await polling_manager.poll_until_complete(job_id)
+
+            if result.success:
+                return {
+                    "success": True,
+                    "result_url": result.result_url,
+                    "job_id": job_id,
+                    "metadata": result.metadata,
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.error,
+                    "job_id": job_id,
+                }
+
+    except ValueError as e:
+        return {"success": False, "error": f"Invalid file format: {str(e)}"}
+    except DeapiAPIError as e:
+        return {"success": False, "error": f"API error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
+async def video_replace_price(
+    model: Annotated[str, Field(description="Video replace model name")],
+    duration: Annotated[float, Field(gt=0, description="Video duration in seconds")],
+    width: Annotated[Optional[int], Field(ge=64, le=2048, description="Video width in pixels (optional)")] = None,
+    height: Annotated[Optional[int], Field(ge=64, le=2048, description="Video height in pixels (optional)")] = None,
+) -> dict:
+    """Calculate price for video character replacement.
+
+    Estimates the cost based on model, video duration, and dimensions.
+
+    Returns:
+        dict: Contains 'success' and 'price' information
+    """
+    try:
+        client = get_client()
+        async with client:
+            form_data = {
+                "model": model,
+                "duration": str(duration),
+            }
+
+            if width is not None:
+                form_data["width"] = str(width)
+            if height is not None:
+                form_data["height"] = str(height)
+
+            price_response = await client.calculate_price(
+                endpoint="videos/replace/price",
+                data=form_data,
+            )
+
+            return {"success": True, "price": price_response.get("data", {})}
+
+    except DeapiAPIError as e:
+        return {"success": False, "error": f"API error: {str(e)}"}
+    except Exception as e:
+        return {"success": False, "error": f"Unexpected error: {str(e)}"}
+
+
 async def video_remove_background(
     video: Annotated[str, Field(description="Video as URL, data URI (data:video/mp4;base64,...), or base64 string. URLs are recommended to avoid base64 context bloat.")],
     model: Annotated[str, Field(description="Video background removal model name")],
