@@ -4,7 +4,7 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 
 ## Features
 
-- **Complete API Coverage**: 33 deAPI endpoints exposed as MCP tools
+- **Complete API Coverage**: 35 deAPI endpoints exposed as MCP tools
 - **Smart Adaptive Polling**: Automatically polls async jobs with optimized intervals based on job type
 - **OAuth 2.0 Authentication**: Secure token exchange via OAuth Authorization Code flow with PKCE
 - **Error Recovery**: Automatic retry logic with exponential backoff
@@ -46,9 +46,11 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 - `text_to_video` - Generate videos from text prompts
 - `image_to_video` - Animate static images into videos
 - `audio_to_video` - Generate video conditioned on audio content
+- `video_replace` - Replace a person in a video with a character from a reference image
 - `text_to_video_price` - Calculate text-to-video cost
 - `image_to_video_price` - Calculate image-to-video cost
 - `audio_to_video_price` - Calculate audio-to-video cost
+- `video_replace_price` - Calculate video character replacement cost
 
 ### Embedding Tools
 - `text_to_embedding` - Generate text embeddings for semantic search
@@ -222,7 +224,7 @@ Use audio_transcription with:
 - **Tools** (`src/tools/`): Organized tool implementations
   - `audio.py` - Audio transcription, TTS & music generation tools
   - `image.py` - Image generation, transformation, OCR, background removal & upscaling
-  - `video.py` - Video generation & audio-to-video tools
+  - `video.py` - Video generation, audio-to-video & video replace tools
   - `embedding.py` - Text embedding tools
   - `utility.py` - Balance, models, status tools
 
@@ -283,7 +285,7 @@ mcp-server-deapi/
 │   └── tools/                 # Tool implementations
 │       ├── audio.py           # Audio transcription, TTS & music generation
 │       ├── image.py           # Image generation, OCR & processing
-│       ├── video.py           # Video generation & audio-to-video
+│       ├── video.py           # Video generation, audio-to-video & video replace
 │       ├── embedding.py       # Text embeddings
 │       ├── utility.py         # Balance, models, status
 │       └── _price_helpers.py  # Price calculation helpers
