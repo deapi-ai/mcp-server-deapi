@@ -48,6 +48,8 @@ from .tools.video import (
     text_to_video_price,
     video_remove_background,
     video_remove_background_price,
+    video_replace,
+    video_replace_price,
     video_upscale,
     video_upscale_price,
 )
@@ -105,6 +107,8 @@ mcp.tool()(audio_to_video)
 mcp.tool()(image_to_video_price)
 mcp.tool()(text_to_video_price)
 mcp.tool()(audio_to_video_price)
+mcp.tool()(video_replace)
+mcp.tool()(video_replace_price)
 # video_remove_background and video_upscale not yet implemented in API (no models deployed)
 # mcp.tool()(video_remove_background)
 # mcp.tool()(video_remove_background_price)

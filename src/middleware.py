@@ -43,6 +43,7 @@ INFERENCE_TYPE_TO_TOOLS: Dict[str, List[str]] = {
     "img2txt": ["image_to_text", "image_to_text_price"],
     "img-rmbg": ["image_remove_background", "image_remove_background_price"],
     "img-upscale": ["image_upscale", "image_upscale_price"],
+    "video-replace": ["video_replace", "video_replace_price"],
 }
 
 

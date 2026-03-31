@@ -54,7 +54,7 @@ The primary server is `src/server_remote.py` — an HTTP/SSE-based MCP server bu
 Tools are organized by category:
 - `audio.py` - Audio transcription, TTS, and music generation (8 tools)
 - `image.py` - Image generation, OCR, background removal, upscaling (10 tools)
-- `video.py` - Video generation and audio-to-video (6 tools)
+- `video.py` - Video generation, audio-to-video, and video replace (8 tools)
 - `embedding.py` - Text embeddings (2 tools)
 - `utility.py` - Balance, models, job status (3 tools)
 - `_price_helpers.py` - Shared helper for price calculation parameter resolution
