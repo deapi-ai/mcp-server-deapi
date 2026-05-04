@@ -45,7 +45,7 @@ PRICE_TESTS = [
         "payload": {
             "duration_seconds": "120",
             "include_ts": "true",
-            "model": "whisper-3-large",
+            "model": "WhisperLargeV3",
         },
     },
     {
@@ -80,8 +80,9 @@ PRICE_TESTS = [
             "model": "Ltxv_13B_0_9_8_Distilled_FP8",
             "width": "512",
             "height": "512",
-            "frames": "20",
-            "steps": "20",
+            "frames": "30",
+            "steps": "1",
+            "fps": "30",
         },
     },
     {
@@ -93,24 +94,15 @@ PRICE_TESTS = [
             "model": "Bge_M3_FP16",
         },
     },
-    {
-        "name": "videos/background-removals/price (dimension-based)",
-        "endpoint": "videos/background-removals/price",
-        "content_type": "form",
-        "payload": {
-            "width": "1920",
-            "height": "1080",
-            "model": "RMBG-1.4",
-        },
-    },
+    # videos/background-removals: no production model with inference_type "vid-rmbg" yet — skip
     {
         "name": "videos/upscales/price (dimension-based)",
         "endpoint": "videos/upscales/price",
         "content_type": "form",
         "payload": {
-            "width": "1920",
-            "height": "1080",
-            "model": "RealESRGAN_x4plus",
+            "width": "1024",
+            "height": "1024",
+            "model": "RealESRGAN_Vid_x4",
         },
     },
 ]
