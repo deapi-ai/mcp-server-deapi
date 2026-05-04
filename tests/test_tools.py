@@ -95,7 +95,7 @@ class TestAudioTranscriptionBugFix:
 
         # THE KEY ASSERTION: must use data= and files=, NOT json_data=
         call_kwargs = mock_client.submit_job.call_args
-        assert call_kwargs.kwargs.get("endpoint") == "audiofile2txt"
+        assert call_kwargs.kwargs.get("endpoint") == "audio/transcriptions"
         assert "data" in call_kwargs.kwargs, "Must use 'data' param (multipart form)"
         assert "files" in call_kwargs.kwargs, "Must use 'files' param (multipart file)"
         assert "json_data" not in call_kwargs.kwargs or call_kwargs.kwargs["json_data"] is None, \
@@ -125,8 +125,8 @@ class TestAudioTranscriptionBugFix:
         assert form_data["return_result_in_response"] == "true"
 
     @pytest.mark.asyncio
-    async def test_files_contain_audio_field(self):
-        """Verify the audio file is sent under the 'audio' field name."""
+    async def test_files_contain_source_file_field(self):
+        """Verify the audio file is sent under the v2 'source_file' field name."""
         mock_client = make_mock_client()
         mock_poll_result = make_mock_poll_result()
         mock_polling = MagicMock()
@@ -140,8 +140,8 @@ class TestAudioTranscriptionBugFix:
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
         files = call_kwargs["files"]
-        assert "audio" in files
-        filename, file_obj, mime_type = files["audio"]
+        assert "source_file" in files
+        filename, file_obj, mime_type = files["source_file"]
         assert filename == "audio.mp3"
         assert mime_type == "audio/mpeg"
         assert isinstance(file_obj, io.BytesIO)
@@ -174,7 +174,7 @@ class TestImageToTextBugFix:
         assert result["success"] is True
 
         call_kwargs = mock_client.submit_job.call_args
-        assert call_kwargs.kwargs.get("endpoint") == "img2txt"
+        assert call_kwargs.kwargs.get("endpoint") == "images/ocr"
         assert "data" in call_kwargs.kwargs, "Must use 'data' param (multipart form)"
         assert "files" in call_kwargs.kwargs, "Must use 'files' param (multipart file)"
         assert "json_data" not in call_kwargs.kwargs or call_kwargs.kwargs["json_data"] is None, \
@@ -250,7 +250,7 @@ class TestTextToAudioPrice:
         assert "price" in result
 
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "txt2audio/price-calculation"
+        assert call_kwargs["endpoint"] == "audio/speech/price"
         json_data = call_kwargs["json_data"]
         assert json_data["text"] == "Hello world"
         assert json_data["model"] == "Kokoro"
@@ -280,7 +280,7 @@ class TestTextToEmbedding:
         assert result["success"] is True
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
-        assert call_kwargs["endpoint"] == "txt2embedding"
+        assert call_kwargs["endpoint"] == "embeddings"
         assert call_kwargs["json_data"]["input"] == "Hello world"
         assert call_kwargs["json_data"]["model"] == "Bge_M3_FP16"
 
@@ -331,7 +331,7 @@ class TestTextToEmbeddingPrice:
 
         assert result["success"] is True
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "txt2embedding/price-calculation"
+        assert call_kwargs["endpoint"] == "embeddings/price"
 
 
 # =============================================================================
@@ -358,7 +358,7 @@ class TestTextToVideoPrice:
         assert result["success"] is True
 
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "txt2video/price-calculation"
+        assert call_kwargs["endpoint"] == "videos/generations/price"
         # txt2video price uses JSON (not form-data)
         json_data = call_kwargs["json_data"]
         assert json_data["model"] == "test-model"
@@ -409,7 +409,7 @@ class TestVideoRemoveBackground:
         assert result["result_url"] == "https://result.url/file"
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
-        assert call_kwargs["endpoint"] == "vid-rmbg"
+        assert call_kwargs["endpoint"] == "videos/background-removals"
         assert "files" in call_kwargs
         assert "video" in call_kwargs["files"]
         assert call_kwargs["data"]["model"] == "test-rmbg-model"
@@ -444,7 +444,7 @@ class TestVideoRemoveBackgroundPrice:
 
         assert result["success"] is True
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "vid-rmbg/price-calculation"
+        assert call_kwargs["endpoint"] == "videos/background-removals/price"
         assert call_kwargs["data"]["width"] == "1920"
         assert call_kwargs["data"]["height"] == "1080"
 
@@ -474,10 +474,32 @@ class TestVideoUpscale:
         assert result["success"] is True
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
-        assert call_kwargs["endpoint"] == "vid-upscale"
+        assert call_kwargs["endpoint"] == "videos/upscales"
         assert "files" in call_kwargs
         assert "video" in call_kwargs["files"]
         assert call_kwargs["data"]["model"] == "test-upscale-model"
+        # scale is optional and omitted when not provided
+        assert "scale" not in call_kwargs["data"]
+
+    @pytest.mark.asyncio
+    async def test_scale_param_forwarded_when_provided(self):
+        mock_client = make_mock_client()
+        mock_poll_result = make_mock_poll_result()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
+
+        with patch("src.tools.video.get_client", return_value=mock_client), \
+             patch("src.tools.video.PollingManager", return_value=mock_polling):
+            from src.tools.video import video_upscale
+
+            await video_upscale(
+                video=make_base64_video(),
+                model="RealESRGAN",
+                scale=4,
+            )
+
+        form_data = mock_client.submit_job.call_args.kwargs["data"]
+        assert form_data["scale"] == "4"
 
 
 class TestVideoUpscalePrice:
@@ -492,7 +514,7 @@ class TestVideoUpscalePrice:
 
         assert result["success"] is True
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "vid-upscale/price-calculation"
+        assert call_kwargs["endpoint"] == "videos/upscales/price"
 
     @pytest.mark.asyncio
     async def test_optional_dimensions(self):
@@ -512,6 +534,21 @@ class TestVideoUpscalePrice:
             form_data = mock_client.calculate_price.call_args.kwargs["data"]
             assert form_data["width"] == "3840"
             assert form_data["height"] == "2160"
+
+    @pytest.mark.asyncio
+    async def test_scale_and_duration_forwarded(self):
+        mock_client = make_mock_client()
+
+        with patch("src.tools.video.get_client", return_value=mock_client):
+            from src.tools.video import video_upscale_price
+
+            await video_upscale_price(
+                model="RealESRGAN", width=1920, height=1080, scale=4, duration=12.5
+            )
+
+        form_data = mock_client.calculate_price.call_args.kwargs["data"]
+        assert form_data["scale"] == "4"
+        assert form_data["duration"] == "12.5"
 
 
 # =============================================================================
@@ -544,7 +581,7 @@ class TestVideoReplace:
         assert result["result_url"] == "https://result.url/file"
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
-        assert call_kwargs["endpoint"] == "videos/replace"
+        assert call_kwargs["endpoint"] == "videos/replacements"
         assert "files" in call_kwargs
         assert "video" in call_kwargs["files"]
         assert "ref_image" in call_kwargs["files"]
@@ -633,7 +670,7 @@ class TestVideoReplacePrice:
 
         assert result["success"] is True
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "videos/replace/price"
+        assert call_kwargs["endpoint"] == "videos/replacements/price"
         assert call_kwargs["data"]["model"] == "test"
         assert call_kwargs["data"]["duration"] == "5.0"
 
@@ -852,7 +889,7 @@ class TestTextToMusic:
         assert result["job_id"] == "test-job-id-123"
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
-        assert call_kwargs["endpoint"] == "txt2music"
+        assert call_kwargs["endpoint"] == "audio/music"
         assert "data" in call_kwargs
         form_data = call_kwargs["data"]
         assert form_data["caption"] == "upbeat pop song"
@@ -1008,7 +1045,7 @@ class TestTextToMusicPrice:
         assert "price" in result
 
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "txt2music/price-calculation"
+        assert call_kwargs["endpoint"] == "audio/music/price"
         form_data = call_kwargs["data"]
         assert form_data["model"] == "test-music-model"
         assert form_data["duration"] == "60"
@@ -1061,7 +1098,7 @@ class TestAudioToVideo:
         assert result["job_id"] == "test-job-id-123"
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
-        assert call_kwargs["endpoint"] == "aud2video"
+        assert call_kwargs["endpoint"] == "videos/audio-syncs"
         assert "data" in call_kwargs
         assert "files" in call_kwargs
 
@@ -1202,7 +1239,7 @@ class TestAudioToVideoPrice:
         assert "price" in result
 
         call_kwargs = mock_client.calculate_price.call_args.kwargs
-        assert call_kwargs["endpoint"] == "aud2video/price-calculation"
+        assert call_kwargs["endpoint"] == "videos/audio-syncs/price"
         json_data = call_kwargs["json_data"]
         assert json_data["model"] == "test-model"
         assert json_data["width"] == 768
@@ -1221,3 +1258,104 @@ class TestAudioToVideoPrice:
         json_data = mock_client.calculate_price.call_args.kwargs["json_data"]
         assert "seed" not in json_data
         assert "guidance" not in json_data
+
+
+# =============================================================================
+# NEW TOOL: prompt_booster (synchronous — returns enhanced prompt directly)
+# =============================================================================
+
+
+class TestPromptBooster:
+    @pytest.mark.asyncio
+    async def test_text_only_call_uses_post_sync(self):
+        mock_client = make_mock_client()
+        mock_client.post_sync = AsyncMock(return_value={
+            "prompt": "an enhanced beautiful landscape",
+            "negative_prompt": None,
+        })
+
+        with patch("src.tools.prompt.get_client", return_value=mock_client):
+            from src.tools.prompt import prompt_booster
+
+            result = await prompt_booster(
+                prompt="a landscape",
+                type="images.generations",
+                model_slug="Flux1schnell",
+            )
+
+        assert result["success"] is True
+        assert result["prompt"] == "an enhanced beautiful landscape"
+        assert result["negative_prompt"] is None
+
+        call_kwargs = mock_client.post_sync.call_args.kwargs
+        assert call_kwargs["endpoint"] == "prompts/enhancements"
+        form_data = call_kwargs["data"]
+        assert form_data["prompt"] == "a landscape"
+        assert form_data["type"] == "images.generations"
+        assert form_data["model_slug"] == "Flux1schnell"
+        assert "negative_prompt" not in form_data
+        assert call_kwargs.get("files") is None
+
+    @pytest.mark.asyncio
+    async def test_with_image_uploads_multipart(self):
+        mock_client = make_mock_client()
+        mock_client.post_sync = AsyncMock(return_value={"prompt": "x"})
+
+        with patch("src.tools.prompt.get_client", return_value=mock_client):
+            from src.tools.prompt import prompt_booster
+
+            await prompt_booster(
+                prompt="edit this",
+                type="images.edits",
+                model_slug="Flux1schnell",
+                negative_prompt="ugly",
+                image=make_base64_image(),
+            )
+
+        call_kwargs = mock_client.post_sync.call_args.kwargs
+        assert call_kwargs["data"]["negative_prompt"] == "ugly"
+        assert call_kwargs["files"] is not None
+        assert "image" in call_kwargs["files"]
+
+    @pytest.mark.asyncio
+    async def test_api_error_returned_in_dict(self):
+        mock_client = make_mock_client()
+        from src.deapi_client import DeapiAPIError
+        mock_client.post_sync = AsyncMock(
+            side_effect=DeapiAPIError("No guide available", status_code=422)
+        )
+
+        with patch("src.tools.prompt.get_client", return_value=mock_client):
+            from src.tools.prompt import prompt_booster
+
+            result = await prompt_booster(
+                prompt="test",
+                type="images.generations",
+                model_slug="UnknownModel",
+            )
+
+        assert result["success"] is False
+        assert "API error" in result["error"]
+
+
+class TestPromptBoosterPrice:
+    @pytest.mark.asyncio
+    async def test_correct_endpoint(self):
+        mock_client = make_mock_client()
+        mock_client.calculate_price = AsyncMock(return_value={"price": 0.0001})
+
+        with patch("src.tools.prompt.get_client", return_value=mock_client):
+            from src.tools.prompt import prompt_booster_price
+
+            result = await prompt_booster_price(
+                prompt="a landscape",
+                type="images.generations",
+                model_slug="Flux1schnell",
+            )
+
+        assert result["success"] is True
+        assert result["price"] == 0.0001
+
+        call_kwargs = mock_client.calculate_price.call_args.kwargs
+        assert call_kwargs["endpoint"] == "prompts/enhancements/price"
+        assert call_kwargs["data"]["type"] == "images.generations"
