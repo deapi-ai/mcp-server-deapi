@@ -50,7 +50,7 @@ async def text_to_image(
                 request_data["negative_prompt"] = negative_prompt
 
             job_response = await client.submit_job(
-                endpoint="txt2img",
+                endpoint="images/generations",
                 json_data=request_data,
             )
             job_id = job_response.data.request_id
@@ -131,7 +131,7 @@ async def image_to_image(
                 form_data["loras"] = json.dumps(loras)
 
             job_response = await client.submit_job(
-                endpoint="img2img",
+                endpoint="images/edits",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -196,7 +196,7 @@ async def image_to_text(
                 form_data["language"] = language
 
             job_response = await client.submit_job(
-                endpoint="img2txt",
+                endpoint="images/ocr",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -254,7 +254,7 @@ async def text_to_image_price(
             }
 
             price_response = await client.calculate_price(
-                endpoint="txt2img/price-calculation",
+                endpoint="images/generations/price",
                 json_data=request_data,
             )
 
@@ -289,7 +289,7 @@ async def image_to_image_price(
             }
 
             price_response = await client.calculate_price(
-                endpoint="img2img/price-calculation",
+                endpoint="images/edits/price",
                 json_data=request_data,
             )
 
@@ -327,7 +327,7 @@ async def image_to_text_price(
                 form_data["language"] = language
 
             price_response = await client.calculate_price(
-                endpoint="img2txt/price-calculation",
+                endpoint="images/ocr/price",
                 data=form_data,
             )
 
@@ -366,7 +366,7 @@ async def image_remove_background(
             }
 
             job_response = await client.submit_job(
-                endpoint="img-rmbg",
+                endpoint="images/background-removals",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -422,7 +422,7 @@ async def image_remove_background_price(
                 form_data["height"] = str(height)
 
             price_response = await client.calculate_price(
-                endpoint="img-rmbg/price-calculation",
+                endpoint="images/background-removals/price",
                 data=form_data,
             )
 
@@ -461,7 +461,7 @@ async def image_upscale(
             }
 
             job_response = await client.submit_job(
-                endpoint="img-upscale",
+                endpoint="images/upscales",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -517,7 +517,7 @@ async def image_upscale_price(
                 form_data["height"] = str(height)
 
             price_response = await client.calculate_price(
-                endpoint="img-upscale/price-calculation",
+                endpoint="images/upscales/price",
                 data=form_data,
             )
 

@@ -112,7 +112,7 @@ class DeapiClient:
         if not self._client:
             raise RuntimeError("Client not initialized. Use async context manager.")
 
-        url = f"/api/{self.api_version}/client/{endpoint}"
+        url = f"/api/{self.api_version}/{endpoint}"
 
         if files:
             # Multipart form data request
@@ -167,7 +167,7 @@ class DeapiClient:
         """Submit a job to deAPI.
 
         Args:
-            endpoint: API endpoint (e.g., 'audiofile2txt', 'txt2img')
+            endpoint: API endpoint (e.g., 'audio/transcriptions', 'images/generations')
             data: Form data
             json_data: JSON data
             files: Files for upload
@@ -195,7 +195,7 @@ class DeapiClient:
         """
         response_data = await self._request(
             method="GET",
-            endpoint=f"request-status/{job_id}",
+            endpoint=f"jobs/{job_id}",
         )
         return JobStatusResponse(**response_data)
 
@@ -207,7 +207,7 @@ class DeapiClient:
         """
         response_data = await self._request(
             method="GET",
-            endpoint="balance",
+            endpoint="account/balance",
         )
         return BalanceResponse(**response_data)
 
@@ -233,13 +233,33 @@ class DeapiClient:
         """Calculate price for an operation.
 
         Args:
-            endpoint: Price calculation endpoint (e.g., 'txt2img/price-calculation')
+            endpoint: Price calculation endpoint (e.g., 'images/generations/price')
             data: Form data
             json_data: JSON data
             files: Files for upload
 
         Returns:
             Price calculation response
+        """
+        return await self._request(
+            method="POST",
+            endpoint=endpoint,
+            data=data,
+            json_data=json_data,
+            files=files,
+        )
+
+    async def post_sync(
+        self,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+        json_data: Optional[Dict[str, Any]] = None,
+        files: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """POST to a synchronous (non-job) endpoint and return the raw response.
+
+        For endpoints that return a result directly instead of a job_id (e.g.,
+        prompt enhancements). Same retry/error semantics as submit_job.
         """
         return await self._request(
             method="POST",

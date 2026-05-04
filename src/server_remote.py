@@ -38,6 +38,7 @@ from .tools.image import (
     text_to_image_price,
 )
 from .tools.embedding import text_to_embedding, text_to_embedding_price
+from .tools.prompt import prompt_booster, prompt_booster_price
 from .tools.utility import check_job_status, get_available_models, get_balance
 from .tools.video import (
     audio_to_video,
@@ -109,11 +110,10 @@ mcp.tool()(text_to_video_price)
 mcp.tool()(audio_to_video_price)
 mcp.tool()(video_replace)
 mcp.tool()(video_replace_price)
-# video_remove_background and video_upscale not yet implemented in API (no models deployed)
-# mcp.tool()(video_remove_background)
-# mcp.tool()(video_remove_background_price)
-# mcp.tool()(video_upscale)
-# mcp.tool()(video_upscale_price)
+mcp.tool()(video_remove_background)
+mcp.tool()(video_remove_background_price)
+mcp.tool()(video_upscale)
+mcp.tool()(video_upscale_price)
 
 
 # ============================================================================
@@ -122,6 +122,14 @@ mcp.tool()(video_replace_price)
 
 mcp.tool()(text_to_embedding)
 mcp.tool()(text_to_embedding_price)
+
+
+# ============================================================================
+# PROMPT BOOSTER TOOLS
+# ============================================================================
+
+mcp.tool()(prompt_booster)
+mcp.tool()(prompt_booster_price)
 
 
 # ============================================================================
