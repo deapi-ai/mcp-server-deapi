@@ -44,6 +44,8 @@ INFERENCE_TYPE_TO_TOOLS: Dict[str, List[str]] = {
     "img-rmbg": ["image_remove_background", "image_remove_background_price"],
     "img-upscale": ["image_upscale", "image_upscale_price"],
     "video-replace": ["video_replace", "video_replace_price"],
+    "vid-rmbg": ["video_remove_background", "video_remove_background_price"],
+    "vid-upscale": ["video_upscale", "video_upscale_price"],
 }
 
 

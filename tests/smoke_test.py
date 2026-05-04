@@ -17,7 +17,7 @@ import sys
 import httpx
 
 BASE_URL = os.getenv("DEAPI_API_BASE_URL", "https://api.deapi.ai")
-API_PREFIX = "/api/v1/client"
+API_PREFIX = "/api/v2"
 
 
 def get_token() -> str:
@@ -39,18 +39,18 @@ def get_token() -> str:
 
 PRICE_TESTS = [
     {
-        "name": "audiofile2txt/price-calculation (duration-based)",
-        "endpoint": "audiofile2txt/price-calculation",
+        "name": "audio/transcriptions/price (duration-based)",
+        "endpoint": "audio/transcriptions/price",
         "content_type": "form",
         "payload": {
             "duration_seconds": "120",
             "include_ts": "true",
-            "model": "whisper-3-large",
+            "model": "WhisperLargeV3",
         },
     },
     {
-        "name": "img2txt/price-calculation (dimension-based)",
-        "endpoint": "img2txt/price-calculation",
+        "name": "images/ocr/price (dimension-based)",
+        "endpoint": "images/ocr/price",
         "content_type": "form",
         "payload": {
             "width": "1920",
@@ -59,8 +59,8 @@ PRICE_TESTS = [
         },
     },
     {
-        "name": "txt2audio/price-calculation",
-        "endpoint": "txt2audio/price-calculation",
+        "name": "audio/speech/price",
+        "endpoint": "audio/speech/price",
         "content_type": "json",
         "payload": {
             "model": "Kokoro",
@@ -73,34 +73,36 @@ PRICE_TESTS = [
         },
     },
     {
-        "name": "txt2video/price-calculation",
-        "endpoint": "txt2video/price-calculation",
+        "name": "videos/generations/price",
+        "endpoint": "videos/generations/price",
         "content_type": "form",
         "payload": {
             "model": "Ltxv_13B_0_9_8_Distilled_FP8",
             "width": "512",
             "height": "512",
-            "frames": "20",
-            "steps": "20",
+            "frames": "30",
+            "steps": "1",
+            "fps": "30",
         },
     },
     {
-        "name": "txt2embedding/price-calculation",
-        "endpoint": "txt2embedding/price-calculation",
+        "name": "embeddings/price",
+        "endpoint": "embeddings/price",
         "content_type": "json",
         "payload": {
             "input": "This is a test string for price calculation.",
             "model": "Bge_M3_FP16",
         },
     },
+    # videos/background-removals: no production model with inference_type "vid-rmbg" yet — skip
     {
-        "name": "vid-rmbg/price-calculation (dimension-based)",
-        "endpoint": "vid-rmbg/price-calculation",
+        "name": "videos/upscales/price (dimension-based)",
+        "endpoint": "videos/upscales/price",
         "content_type": "form",
         "payload": {
-            "width": "1920",
-            "height": "1080",
-            "model": "RMBG-1.4",
+            "width": "1024",
+            "height": "1024",
+            "model": "RealESRGAN_Vid_x4",
         },
     },
 ]
