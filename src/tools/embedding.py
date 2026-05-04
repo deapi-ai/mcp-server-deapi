@@ -31,7 +31,7 @@ async def text_to_embedding(
             }
 
             job_response = await client.submit_job(
-                endpoint="txt2embedding",
+                endpoint="embeddings",
                 json_data=request_data,
             )
             job_id = job_response.data.request_id
@@ -77,7 +77,7 @@ async def text_to_embedding_price(
             }
 
             price_response = await client.calculate_price(
-                endpoint="txt2embedding/price-calculation",
+                endpoint="embeddings/price",
                 json_data=request_data,
             )
 

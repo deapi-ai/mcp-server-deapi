@@ -68,7 +68,7 @@ async def image_to_video(
                 form_data["negative_prompt"] = negative_prompt
 
             job_response = await client.submit_job(
-                endpoint="img2video",
+                endpoint="videos/animations",
                 data=form_data,
                 files=files,
             )
@@ -147,7 +147,7 @@ async def text_to_video(
                 request_data["negative_prompt"] = negative_prompt
 
             job_response = await client.submit_job(
-                endpoint="txt2video",
+                endpoint="videos/generations",
                 data=request_data,  # Use data for form-data, not json_data
             )
             job_id = job_response.data.request_id
@@ -208,7 +208,7 @@ async def image_to_video_price(
             request_data.pop("guidance", None)
 
             price_response = await client.calculate_price(
-                endpoint="img2video/price-calculation",
+                endpoint="videos/animations/price",
                 json_data=request_data,
             )
 
@@ -253,7 +253,7 @@ async def text_to_video_price(
             request_data.pop("guidance", None)
 
             price_response = await client.calculate_price(
-                endpoint="txt2video/price-calculation",
+                endpoint="videos/generations/price",
                 json_data=request_data,
             )
 
@@ -328,7 +328,7 @@ async def audio_to_video(
                 form_data["steps"] = str(steps)
 
             job_response = await client.submit_job(
-                endpoint="aud2video",
+                endpoint="videos/audio-syncs",
                 data=form_data,
                 files=files,
             )
@@ -391,7 +391,7 @@ async def audio_to_video_price(
             request_data.pop("guidance", None)
 
             price_response = await client.calculate_price(
-                endpoint="aud2video/price-calculation",
+                endpoint="videos/audio-syncs/price",
                 json_data=request_data,
             )
 
@@ -449,7 +449,7 @@ async def video_replace(
                 form_data["height"] = str(height)
 
             job_response = await client.submit_job(
-                endpoint="videos/replace",
+                endpoint="videos/replacements",
                 data=form_data,
                 files=files,
             )
@@ -507,7 +507,7 @@ async def video_replace_price(
                 form_data["height"] = str(height)
 
             price_response = await client.calculate_price(
-                endpoint="videos/replace/price",
+                endpoint="videos/replacements/price",
                 data=form_data,
             )
 
@@ -543,7 +543,7 @@ async def video_remove_background(
             }
 
             job_response = await client.submit_job(
-                endpoint="vid-rmbg",
+                endpoint="videos/background-removals",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -597,7 +597,7 @@ async def video_remove_background_price(
                 form_data["height"] = str(height)
 
             price_response = await client.calculate_price(
-                endpoint="vid-rmbg/price-calculation",
+                endpoint="videos/background-removals/price",
                 data=form_data,
             )
 
@@ -612,6 +612,7 @@ async def video_remove_background_price(
 async def video_upscale(
     video: Annotated[str, Field(description="Video as URL, data URI (data:video/mp4;base64,...), or base64 string. URLs are recommended to avoid base64 context bloat.")],
     model: Annotated[str, Field(description="Video upscaling model name")],
+    scale: Annotated[Optional[int], Field(ge=1, le=16, description="Optional upscale factor (e.g. 2, 4). Only allowed for models that support a configurable scale; fixed-scale models (e.g. x2/x4 only) reject this field. Validated against the per-model min/max scale.")] = None,
 ) -> dict:
     """Upscale a video to higher resolution.
 
@@ -632,9 +633,11 @@ async def video_upscale(
             form_data = {
                 "model": model,
             }
+            if scale is not None:
+                form_data["scale"] = str(scale)
 
             job_response = await client.submit_job(
-                endpoint="vid-upscale",
+                endpoint="videos/upscales",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -667,10 +670,15 @@ async def video_upscale(
 
 async def video_upscale_price(
     model: Annotated[str, Field(description="Video upscaling model name")],
-    width: Annotated[Optional[int], Field(ge=1, le=10240, description="Video width in pixels (optional)")] = None,
-    height: Annotated[Optional[int], Field(ge=1, le=10240, description="Video height in pixels (optional)")] = None,
+    width: Annotated[Optional[int], Field(ge=1, le=10240, description="Video width in pixels. Provide width+height to estimate without uploading a file.")] = None,
+    height: Annotated[Optional[int], Field(ge=1, le=10240, description="Video height in pixels. Provide width+height to estimate without uploading a file.")] = None,
+    scale: Annotated[Optional[int], Field(ge=1, le=16, description="Optional upscale factor (e.g. 2, 4). Only allowed for models that support a configurable scale.")] = None,
+    duration: Annotated[Optional[float], Field(gt=0, description="Optional video duration in seconds. Pricing is not duration-dependent for video upscaling, but providing this lets the API validate against the model's max allowed duration.")] = None,
 ) -> dict:
     """Calculate price for video upscaling.
+
+    Pass width+height (and optionally scale/duration) to estimate price
+    without uploading a video file.
 
     Returns:
         dict: Contains 'success' and 'price' information
@@ -686,9 +694,13 @@ async def video_upscale_price(
                 form_data["width"] = str(width)
             if height is not None:
                 form_data["height"] = str(height)
+            if scale is not None:
+                form_data["scale"] = str(scale)
+            if duration is not None:
+                form_data["duration"] = str(duration)
 
             price_response = await client.calculate_price(
-                endpoint="vid-upscale/price-calculation",
+                endpoint="videos/upscales/price",
                 data=form_data,
             )
 

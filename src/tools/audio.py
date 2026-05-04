@@ -6,7 +6,7 @@ from pydantic import Field
 
 from ..deapi_client import get_client, DeapiAPIError
 from ..polling_manager import PollingManager
-from ..utils import prepare_audio_upload_async
+from ..utils import prepare_audio_upload_async, prepare_video_upload_async
 
 
 async def audio_transcription(
@@ -27,7 +27,7 @@ async def audio_transcription(
         client = get_client()
         async with client:
             # Prepare audio file for multipart upload
-            field_name, file_tuple = await prepare_audio_upload_async(audio, "audio")
+            field_name, file_tuple = await prepare_audio_upload_async(audio, "source_file")
 
             # Prepare form data (non-file parameters)
             form_data = {
@@ -37,7 +37,7 @@ async def audio_transcription(
             }
 
             job_response = await client.submit_job(
-                endpoint="audiofile2txt",
+                endpoint="audio/transcriptions",
                 data=form_data,
                 files={field_name: file_tuple},
             )
@@ -93,7 +93,7 @@ async def audio_transcription_price(
                 form_data["duration_seconds"] = str(duration_seconds)
 
             price_response = await client.calculate_price(
-                endpoint="audiofile2txt/price-calculation",
+                endpoint="audio/transcriptions/price",
                 data=form_data,
             )
 
@@ -137,7 +137,7 @@ async def text_to_audio(
             }
 
             job_response = await client.submit_job(
-                endpoint="txt2audio",
+                endpoint="audio/speech",
                 json_data=request_data,
             )
             job_id = job_response.data.request_id
@@ -193,7 +193,7 @@ async def text_to_audio_price(
             }
 
             price_response = await client.calculate_price(
-                endpoint="txt2audio/price-calculation",
+                endpoint="audio/speech/price",
                 json_data=request_data,
             )
 
@@ -223,19 +223,19 @@ async def video_file_transcription(
     try:
         client = get_client()
         async with client:
-            # Prepare video file upload (need to check if API expects file or base64)
-            # Based on OpenAPI spec, videofile2txt uses application/json with binary format
-            # So we'll send as JSON like audiofile2txt
-            request_data = {
-                "video": video,
-                "include_ts": include_ts,
+            # v2 unified transcription endpoint takes the video as a multipart file upload
+            field_name, file_tuple = await prepare_video_upload_async(video, "source_file")
+
+            form_data = {
+                "include_ts": str(include_ts).lower(),
                 "model": model,
-                "return_result_in_response": return_result_in_response,
+                "return_result_in_response": str(return_result_in_response).lower(),
             }
 
             job_response = await client.submit_job(
-                endpoint="videofile2txt",
-                json_data=request_data,
+                endpoint="audio/transcriptions",
+                data=form_data,
+                files={field_name: file_tuple},
             )
             job_id = job_response.data.request_id
 
@@ -289,7 +289,7 @@ async def video_file_transcription_price(
                 form_data["duration_seconds"] = str(duration_seconds)
 
             price_response = await client.calculate_price(
-                endpoint="videofile2txt/price-calculation",
+                endpoint="audio/transcriptions/price",
                 data=form_data,
             )
 
@@ -319,16 +319,16 @@ async def video_url_transcription(
     try:
         client = get_client()
         async with client:
-            request_data = {
-                "video_url": video_url,
-                "include_ts": include_ts,
+            form_data = {
+                "source_url": video_url,
+                "include_ts": str(include_ts).lower(),
                 "model": model,
-                "return_result_in_response": return_result_in_response,
+                "return_result_in_response": str(return_result_in_response).lower(),
             }
 
             job_response = await client.submit_job(
-                endpoint="vid2txt",
-                json_data=request_data,
+                endpoint="audio/transcriptions",
+                data=form_data,
             )
             job_id = job_response.data.request_id
 
@@ -369,15 +369,15 @@ async def video_url_transcription_price(
     try:
         client = get_client()
         async with client:
-            request_data = {
-                "video_url": video_url,
-                "include_ts": include_ts,
+            form_data = {
+                "source_url": video_url,
+                "include_ts": str(include_ts).lower(),
                 "model": model,
             }
 
             price_response = await client.calculate_price(
-                endpoint="vid2txt/price-calculation",
-                json_data=request_data,
+                endpoint="audio/transcriptions/price",
+                data=form_data,
             )
 
             return {"success": True, "price": price_response.get("data", {})}
@@ -445,7 +445,7 @@ async def text_to_music(
                 files[field_name] = file_tuple
 
             job_response = await client.submit_job(
-                endpoint="txt2music",
+                endpoint="audio/music",
                 data=form_data,
                 files=files if files else None,
             )
@@ -497,7 +497,7 @@ async def text_to_music_price(
                 form_data["inference_steps"] = str(inference_steps)
 
             price_response = await client.calculate_price(
-                endpoint="txt2music/price-calculation",
+                endpoint="audio/music/price",
                 data=form_data,
             )
 
@@ -527,16 +527,16 @@ async def audio_url_transcription(
     try:
         client = get_client()
         async with client:
-            request_data = {
-                "audio_url": audio_url,
-                "include_ts": include_ts,
+            form_data = {
+                "source_url": audio_url,
+                "include_ts": str(include_ts).lower(),
                 "model": model,
-                "return_result_in_response": return_result_in_response,
+                "return_result_in_response": str(return_result_in_response).lower(),
             }
 
             job_response = await client.submit_job(
-                endpoint="aud2txt",
-                json_data=request_data,
+                endpoint="audio/transcriptions",
+                data=form_data,
             )
             job_id = job_response.data.request_id
 
@@ -580,19 +580,19 @@ async def audio_url_transcription_price(
     try:
         client = get_client()
         async with client:
-            request_data = {
-                "include_ts": include_ts,
+            form_data = {
+                "include_ts": str(include_ts).lower(),
                 "model": model,
             }
 
             if audio_url:
-                request_data["audio_url"] = audio_url
+                form_data["source_url"] = audio_url
             if duration_seconds is not None:
-                request_data["duration_seconds"] = duration_seconds
+                form_data["duration_seconds"] = str(duration_seconds)
 
             price_response = await client.calculate_price(
-                endpoint="aud2txt/price-calculation",
-                json_data=request_data,
+                endpoint="audio/transcriptions/price",
+                data=form_data,
             )
 
             return {"success": True, "price": price_response.get("data", {})}

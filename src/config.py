@@ -25,7 +25,7 @@ class Settings(BaseSettings):
         description="Base URL for deAPI REST API"
     )
     deapi_api_version: str = Field(
-        default="v1",
+        default="v2",
         description="API version"
     )
 

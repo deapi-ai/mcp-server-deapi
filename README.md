@@ -2,9 +2,11 @@
 
 Production-ready Model Context Protocol (MCP) server for the [deAPI](https://deapi.ai) REST API. This server exposes all deAPI AI capabilities as MCP tools, enabling LLMs to perform audio transcription, image generation, OCR, video generation, text-to-speech, and more.
 
+> **deAPI v2** — this server targets the deAPI v2 client API (OpenAI-aligned noun paths under `/api/v2/*`). Set `DEAPI_API_VERSION=v1` if you need to point at the legacy v1 endpoints.
+
 ## Features
 
-- **Complete API Coverage**: 35 deAPI endpoints exposed as MCP tools
+- **Complete API Coverage**: 39 deAPI tools exposed via MCP, covering every v2 client endpoint
 - **Smart Adaptive Polling**: Automatically polls async jobs with optimized intervals based on job type
 - **OAuth 2.0 Authentication**: Secure token exchange via OAuth Authorization Code flow with PKCE
 - **Error Recovery**: Automatic retry logic with exponential backoff
@@ -47,14 +49,22 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 - `image_to_video` - Animate static images into videos
 - `audio_to_video` - Generate video conditioned on audio content
 - `video_replace` - Replace a person in a video with a character from a reference image
+- `video_remove_background` - Remove the background from a video
+- `video_upscale` - Upscale a video to higher resolution
 - `text_to_video_price` - Calculate text-to-video cost
 - `image_to_video_price` - Calculate image-to-video cost
 - `audio_to_video_price` - Calculate audio-to-video cost
 - `video_replace_price` - Calculate video character replacement cost
+- `video_remove_background_price` - Calculate video background-removal cost
+- `video_upscale_price` - Calculate video upscaling cost
 
 ### Embedding Tools
 - `text_to_embedding` - Generate text embeddings for semantic search
 - `text_to_embedding_price` - Calculate embedding cost
+
+### Prompt Tools
+- `prompt_booster` - Enhance a prompt for any deAPI inference type using AI guides (synchronous, returns refined prompt directly)
+- `prompt_booster_price` - Calculate prompt-enhancement cost
 
 ### Utility Tools
 - `get_balance` - Check account balance
@@ -254,7 +264,7 @@ Configuration can be set via environment variables (prefixed with `DEAPI_`):
 ```bash
 # API Configuration
 DEAPI_API_BASE_URL=https://api.deapi.ai
-DEAPI_API_VERSION=v1
+DEAPI_API_VERSION=v2
 
 # HTTP Client
 DEAPI_HTTP_TIMEOUT=30.0
