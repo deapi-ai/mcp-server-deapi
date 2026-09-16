@@ -25,19 +25,19 @@ from .tools.audio import (
     video_url_transcription,
     video_url_transcription_price,
 )
+from .tools.embedding import text_to_embedding, text_to_embedding_price
 from .tools.image import (
+    image_remove_background,
+    image_remove_background_price,
     image_to_image,
     image_to_image_price,
     image_to_text,
     image_to_text_price,
-    image_remove_background,
-    image_remove_background_price,
     image_upscale,
     image_upscale_price,
     text_to_image,
     text_to_image_price,
 )
-from .tools.embedding import text_to_embedding, text_to_embedding_price
 from .tools.prompt import prompt_booster, prompt_booster_price
 from .tools.utility import check_job_status, get_available_models, get_balance
 from .tools.video import (
@@ -145,12 +145,12 @@ mcp.tool()(check_job_status)
 # SERVER ENTRY POINT FOR REMOTE HOSTING
 # ============================================================================
 
+
 def main():
     """Entry point for the MCP server (used by console_scripts and __main__)."""
     # Configure logging
     logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     logger = logging.getLogger(__name__)
 
@@ -170,8 +170,10 @@ def main():
 
     # Conditionally enable model description enrichment middleware
     from .config import settings as deapi_settings
+
     if deapi_settings.enrich_tool_descriptions:
         from .middleware import ModelEnrichmentMiddleware
+
         mcp.add_middleware(ModelEnrichmentMiddleware(ttl=deapi_settings.model_cache_ttl))
         logger.info(
             "Model description enrichment enabled (TTL: %ss)",
@@ -179,17 +181,19 @@ def main():
         )
 
     # Get the Starlette app from FastMCP with streamable-http transport
-    starlette_app = mcp.http_app(transport='streamable-http')
+    starlette_app = mcp.http_app(transport="streamable-http")
 
     # Add health check endpoint for Docker/monitoring
     from starlette.responses import JSONResponse
     from starlette.routing import Route
+
     from .oauth_endpoints import (
         authorize_endpoint,
         oauth_authorization_server_metadata,
         oauth_protected_resource_metadata,
         token_endpoint,
     )
+    from .webhooks import WEBHOOK_ROUTE, internal_webhooks_enabled, webhook_receiver
 
     async def health_check(request):
         """Health check endpoint for Docker and monitoring."""
@@ -215,12 +219,19 @@ def main():
         Route("/.well-known/oauth-protected-resource/mcp", oauth_protected_resource_metadata)
     )
     # OAuth Authorization Code flow endpoints
-    starlette_app.routes.append(
-        Route("/authorize", authorize_endpoint, methods=["GET"])
-    )
-    starlette_app.routes.append(
-        Route("/token", token_endpoint, methods=["POST"])
-    )
+    starlette_app.routes.append(Route("/authorize", authorize_endpoint, methods=["GET"]))
+    starlette_app.routes.append(Route("/token", token_endpoint, methods=["POST"]))
+
+    # Internal completion webhooks: only mounted when configured, so a server
+    # that isn't using them exposes no receiver at all.
+    if internal_webhooks_enabled():
+        starlette_app.routes.append(Route(WEBHOOK_ROUTE, webhook_receiver, methods=["POST"]))
+        logger.info(
+            f"Internal webhooks: ON — jobs will call back {deapi_settings.webhook_receiver_url} "
+            f"(safety-net poll every {deapi_settings.webhook_fallback_poll_interval:.0f}s)"
+        )
+    else:
+        logger.info("Internal webhooks: off — jobs are polled to completion")
 
     logger.info(f"MCP endpoint: http://{host}:{port}/mcp")
     logger.info(f"OAuth server: http://{host}:{port}/.well-known/oauth-authorization-server")

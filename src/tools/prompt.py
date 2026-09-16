@@ -8,9 +8,8 @@ from typing import Annotated, Literal, Optional
 
 from pydantic import Field
 
-from ..deapi_client import get_client, DeapiAPIError
+from ..deapi_client import DeapiAPIError, get_client
 from ..utils import prepare_image_upload_async
-
 
 PromptBoosterType = Literal[
     "images.generations",
@@ -32,10 +31,31 @@ PromptBoosterType = Literal[
 
 async def prompt_booster(
     prompt: Annotated[str, Field(min_length=3, description="The prompt to enhance.")],
-    type: Annotated[PromptBoosterType, Field(description="Inference type the enhanced prompt is intended for, in v2 dot notation (e.g., 'images.generations', 'videos.animations', 'audio.speech').")],
-    model_slug: Annotated[str, Field(description="Slug of the target deAPI model the enhanced prompt will be used with (e.g., 'Flux1schnell'). The booster picks a guide that matches this model + type.")],
-    negative_prompt: Annotated[Optional[str], Field(min_length=3, description="Optional negative prompt to enhance alongside the main prompt.")] = None,
-    image: Annotated[Optional[str], Field(description="Optional reference image as URL, data URI, or base64. Required for type='images.edits' and 'videos.animations'. Supported formats: JPEG, PNG, BMP, GIF, WebP.")] = None,
+    type: Annotated[
+        PromptBoosterType,
+        Field(
+            description="Inference type the enhanced prompt is intended for, in v2 dot notation (e.g., 'images.generations', 'videos.animations', 'audio.speech')."
+        ),
+    ],
+    model_slug: Annotated[
+        str,
+        Field(
+            description="Slug of the target deAPI model the enhanced prompt will be used with (e.g., 'Flux1schnell'). The booster picks a guide that matches this model + type."
+        ),
+    ],
+    negative_prompt: Annotated[
+        Optional[str],
+        Field(
+            min_length=3,
+            description="Optional negative prompt to enhance alongside the main prompt.",
+        ),
+    ] = None,
+    image: Annotated[
+        Optional[str],
+        Field(
+            description="Optional reference image as URL, data URI, or base64. Required for type='images.edits' and 'videos.animations'. Supported formats: JPEG, PNG, BMP, GIF, WebP."
+        ),
+    ] = None,
 ) -> dict:
     """Enhance a prompt using AI guides tailored to a specific deAPI model + inference type.
 
@@ -83,10 +103,20 @@ async def prompt_booster(
 
 async def prompt_booster_price(
     prompt: Annotated[str, Field(min_length=3, description="The prompt to enhance.")],
-    type: Annotated[PromptBoosterType, Field(description="Inference type in v2 dot notation (e.g., 'images.generations').")],
+    type: Annotated[
+        PromptBoosterType,
+        Field(description="Inference type in v2 dot notation (e.g., 'images.generations')."),
+    ],
     model_slug: Annotated[str, Field(description="Slug of the target deAPI model.")],
-    negative_prompt: Annotated[Optional[str], Field(min_length=3, description="Optional negative prompt.")] = None,
-    image: Annotated[Optional[str], Field(description="Optional reference image (URL, data URI, or base64) — relevant for image-based types.")] = None,
+    negative_prompt: Annotated[
+        Optional[str], Field(min_length=3, description="Optional negative prompt.")
+    ] = None,
+    image: Annotated[
+        Optional[str],
+        Field(
+            description="Optional reference image (URL, data URI, or base64) — relevant for image-based types."
+        ),
+    ] = None,
 ) -> dict:
     """Calculate the price for a prompt-booster call.
 

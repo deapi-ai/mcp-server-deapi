@@ -1,11 +1,10 @@
 """Tests for model-aware tool description enrichment middleware."""
 
-import asyncio
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.middleware import (
     INFERENCE_TYPE_TO_TOOLS,
@@ -14,15 +13,16 @@ from src.middleware import (
     _cache,
     _fetch_and_index_models,
     _format_model_info,
+    ensure_model_cache,
     get_cached_model,
     get_cached_models_for_tool,
 )
 from src.schemas import ModelInfo, ModelsResponse
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_model(
     slug: str,
@@ -42,6 +42,7 @@ def make_model(
 
 class FakeTool(BaseModel):
     """Minimal Pydantic model that mimics FastMCP Tool for testing."""
+
     name: str
     description: str = ""
 
@@ -58,18 +59,27 @@ def _reset_cache():
 # _format_model_info tests
 # ---------------------------------------------------------------------------
 
+
 class TestFormatModelInfo:
     def test_full_image_model(self):
-        model = make_model("Flux1schnell", ["txt2img"], info={
-            "limits": {
-                "min_steps": 1, "max_steps": 10,
-                "min_width": 256, "max_width": 2048,
-                "min_height": 256, "max_height": 2048,
-                "min_guidance": 0, "max_guidance": 20,
+        model = make_model(
+            "Flux1schnell",
+            ["txt2img"],
+            info={
+                "limits": {
+                    "min_steps": 1,
+                    "max_steps": 10,
+                    "min_width": 256,
+                    "max_width": 2048,
+                    "min_height": 256,
+                    "max_height": 2048,
+                    "min_guidance": 0,
+                    "max_guidance": 20,
+                },
+                "defaults": {"steps": "4", "guidance": "0"},
+                "features": {"supports_guidance": "0"},
             },
-            "defaults": {"steps": "4", "guidance": "0"},
-            "features": {"supports_guidance": "0"},
-        })
+        )
         result = _format_model_info(model)
         assert "`Flux1schnell`" in result
         assert "steps=1-10" in result
@@ -79,14 +89,20 @@ class TestFormatModelInfo:
         assert "guidance=0" in result
 
     def test_model_with_guidance_range(self):
-        model = make_model("SDModel", ["txt2img"], info={
-            "limits": {
-                "min_steps": 1, "max_steps": 50,
-                "min_guidance": 1, "max_guidance": 20,
+        model = make_model(
+            "SDModel",
+            ["txt2img"],
+            info={
+                "limits": {
+                    "min_steps": 1,
+                    "max_steps": 50,
+                    "min_guidance": 1,
+                    "max_guidance": 20,
+                },
+                "defaults": {"steps": "20", "guidance": "7.5"},
+                "features": {"supports_guidance": "1"},
             },
-            "defaults": {"steps": "20", "guidance": "7.5"},
-            "features": {"supports_guidance": "1"},
-        })
+        )
         result = _format_model_info(model)
         assert "guidance=1-20" in result
         assert "default 7.5" in result
@@ -103,50 +119,74 @@ class TestFormatModelInfo:
         assert result == "  - `NoneModel`"
 
     def test_video_model_with_fps_and_frames(self):
-        model = make_model("VideoGen", ["txt2video"], info={
-            "limits": {
-                "min_steps": 1, "max_steps": 50,
-                "min_fps": 30, "max_fps": 30,
-                "min_frames": 10, "max_frames": 120,
+        model = make_model(
+            "VideoGen",
+            ["txt2video"],
+            info={
+                "limits": {
+                    "min_steps": 1,
+                    "max_steps": 50,
+                    "min_fps": 30,
+                    "max_fps": 30,
+                    "min_frames": 10,
+                    "max_frames": 120,
+                },
+                "defaults": {"steps": "1"},
+                "features": {},
             },
-            "defaults": {"steps": "1"},
-            "features": {},
-        })
+        )
         result = _format_model_info(model)
         assert "fps=30 (fixed)" in result
         assert "frames=10-120" in result
         assert "steps=1-50" in result
 
     def test_video_model_with_fps_range(self):
-        model = make_model("VideoFlex", ["txt2video"], info={
-            "limits": {"min_fps": 24, "max_fps": 60},
-            "defaults": {},
-            "features": {},
-        })
+        model = make_model(
+            "VideoFlex",
+            ["txt2video"],
+            info={
+                "limits": {"min_fps": 24, "max_fps": 60},
+                "defaults": {},
+                "features": {},
+            },
+        )
         result = _format_model_info(model)
         assert "fps=24-60" in result
         assert "(fixed)" not in result
 
     def test_model_with_loras(self):
-        model = make_model("LoraModel", ["txt2img"], info={
-            "limits": {},
-            "defaults": {},
-            "features": {},
-        }, loras=[{"name": "style1"}, {"name": "style2"}])
+        model = make_model(
+            "LoraModel",
+            ["txt2img"],
+            info={
+                "limits": {},
+                "defaults": {},
+                "features": {},
+            },
+            loras=[{"name": "style1"}, {"name": "style2"}],
+        )
         result = _format_model_info(model)
         assert "2 LoRAs available" in result
 
     def test_music_model_with_duration_and_bpm(self):
-        model = make_model("MusicGen", ["txt2music"], info={
-            "limits": {
-                "min_steps": 8, "max_steps": 100,
-                "min_duration": 10, "max_duration": 300,
-                "min_bpm": 60, "max_bpm": 200,
-                "min_guidance": 0, "max_guidance": 15,
+        model = make_model(
+            "MusicGen",
+            ["txt2music"],
+            info={
+                "limits": {
+                    "min_steps": 8,
+                    "max_steps": 100,
+                    "min_duration": 10,
+                    "max_duration": 300,
+                    "min_bpm": 60,
+                    "max_bpm": 200,
+                    "min_guidance": 0,
+                    "max_guidance": 15,
+                },
+                "defaults": {"steps": "32", "guidance": "3.5"},
+                "features": {"supports_guidance": "1"},
             },
-            "defaults": {"steps": "32", "guidance": "3.5"},
-            "features": {"supports_guidance": "1"},
-        })
+        )
         result = _format_model_info(model)
         assert "`MusicGen`" in result
         assert "duration=10-300s" in result
@@ -155,11 +195,15 @@ class TestFormatModelInfo:
         assert "guidance=0-15" in result
 
     def test_model_with_empty_sub_dicts(self):
-        model = make_model("Bare", ["txt2img"], info={
-            "limits": {},
-            "defaults": {},
-            "features": {},
-        })
+        model = make_model(
+            "Bare",
+            ["txt2img"],
+            info={
+                "limits": {},
+                "defaults": {},
+                "features": {},
+            },
+        )
         result = _format_model_info(model)
         assert result == "  - `Bare`"
 
@@ -167,6 +211,7 @@ class TestFormatModelInfo:
 # ---------------------------------------------------------------------------
 # _build_enrichment_block tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildEnrichmentBlock:
     def test_multiple_models(self):
@@ -185,11 +230,17 @@ class TestBuildEnrichmentBlock:
         assert result == ""
 
     def test_single_model_with_details(self):
-        models = [make_model("DetailedModel", ["txt2img"], info={
-            "limits": {"min_steps": 1, "max_steps": 50},
-            "defaults": {"steps": "20"},
-            "features": {},
-        })]
+        models = [
+            make_model(
+                "DetailedModel",
+                ["txt2img"],
+                info={
+                    "limits": {"min_steps": 1, "max_steps": 50},
+                    "defaults": {"steps": "20"},
+                    "features": {},
+                },
+            )
+        ]
         result = _build_enrichment_block(models)
         assert "---" in result
         assert "`DetailedModel`" in result
@@ -199,6 +250,7 @@ class TestBuildEnrichmentBlock:
 # ---------------------------------------------------------------------------
 # _fetch_and_index_models tests
 # ---------------------------------------------------------------------------
+
 
 class TestFetchAndIndexModels:
     @pytest.fixture(autouse=True)
@@ -232,11 +284,15 @@ class TestFetchAndIndexModels:
     @pytest.mark.asyncio
     async def test_builds_enrichment_blocks(self):
         mock_models = [
-            make_model("ImgModel", ["txt2img"], info={
-                "limits": {"min_steps": 1, "max_steps": 50},
-                "defaults": {"steps": "20"},
-                "features": {},
-            }),
+            make_model(
+                "ImgModel",
+                ["txt2img"],
+                info={
+                    "limits": {"min_steps": 1, "max_steps": 50},
+                    "defaults": {"steps": "20"},
+                    "features": {},
+                },
+            ),
         ]
         mock_response = ModelsResponse(data=mock_models)
 
@@ -275,6 +331,7 @@ class TestFetchAndIndexModels:
 # Cache staleness tests
 # ---------------------------------------------------------------------------
 
+
 class TestCacheStaleness:
     @pytest.fixture(autouse=True)
     def reset(self):
@@ -301,6 +358,7 @@ class TestCacheStaleness:
 # ---------------------------------------------------------------------------
 # ModelEnrichmentMiddleware tests
 # ---------------------------------------------------------------------------
+
 
 class TestModelEnrichmentMiddleware:
     @pytest.fixture(autouse=True)
@@ -504,6 +562,7 @@ class TestModelEnrichmentMiddleware:
 # Mapping coverage
 # ---------------------------------------------------------------------------
 
+
 class TestInferenceTypeMapping:
     def test_all_inference_types_have_two_tools(self):
         """Each inference type should map to both a main tool and a price tool."""
@@ -516,11 +575,21 @@ class TestInferenceTypeMapping:
 
     def test_expected_inference_types_present(self):
         expected = [
-            "txt2img", "img2img", "txt2video", "img2video",
-            "audio2video", "txt2audio", "txt2music", "txt2embedding",
-            "audio_file2text", "audio2text",
-            "video2text", "video_file2text",
-            "img2txt", "img-rmbg", "img-upscale",
+            "txt2img",
+            "img2img",
+            "txt2video",
+            "img2video",
+            "audio2video",
+            "txt2audio",
+            "txt2music",
+            "txt2embedding",
+            "audio_file2text",
+            "audio2text",
+            "video2text",
+            "video_file2text",
+            "img2txt",
+            "img-rmbg",
+            "img-upscale",
         ]
         for itype in expected:
             assert itype in INFERENCE_TYPE_TO_TOOLS, f"Missing mapping for {itype}"
@@ -530,6 +599,7 @@ class TestInferenceTypeMapping:
 # Public cache accessor tests
 # ---------------------------------------------------------------------------
 
+
 class TestCacheAccessors:
     def setup_method(self):
         _reset_cache()
@@ -538,9 +608,13 @@ class TestCacheAccessors:
         _reset_cache()
 
     def test_get_cached_model_found(self):
-        model = make_model("Flux1schnell", ["txt2img"], info={
-            "defaults": {"steps": 4},
-        })
+        model = make_model(
+            "Flux1schnell",
+            ["txt2img"],
+            info={
+                "defaults": {"steps": 4},
+            },
+        )
         _cache.models_by_slug["Flux1schnell"] = model
         result = get_cached_model("Flux1schnell")
         assert result is model
@@ -590,3 +664,32 @@ class TestCacheAccessors:
         assert "Flux1schnell" in _cache.models_by_slug
         assert "WhisperLargeV3" in _cache.models_by_slug
         assert _cache.models_by_slug["Flux1schnell"].slug == "Flux1schnell"
+
+
+class TestEnsureModelCache:
+    """Tools populate the cache on demand; they cannot rely on a prior tools/list."""
+
+    def setup_method(self):
+        _reset_cache()
+
+    def teardown_method(self):
+        _reset_cache()
+
+    @pytest.mark.asyncio
+    async def test_empty_cache_is_fetched_once(self):
+        with patch("src.middleware._fetch_and_index_models", new=AsyncMock()) as fetch:
+            fetch.side_effect = lambda: setattr(_cache, "last_fetched", time.monotonic())
+            await ensure_model_cache()
+            await ensure_model_cache()
+        assert fetch.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_fetch_is_stamped_not_retried_on_every_call(self):
+        with patch(
+            "src.middleware._fetch_and_index_models",
+            new=AsyncMock(side_effect=RuntimeError("down")),
+        ) as fetch:
+            await ensure_model_cache()
+            await ensure_model_cache()
+        assert fetch.await_count == 1
+        assert _cache.last_fetched > 0

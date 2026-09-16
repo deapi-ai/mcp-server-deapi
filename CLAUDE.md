@@ -48,16 +48,18 @@ The primary server is `src/server_remote.py` — an HTTP/SSE-based MCP server bu
 - **`src/schemas.py`** - Pydantic models from the OpenAPI spec
 - **`src/config.py`** - Configuration via environment variables (prefix: `DEAPI_`)
 - **`src/middleware.py`** - Model cache middleware that enriches tool descriptions with available models
+- **`src/webhooks.py`** - Internal completion webhooks: HMAC-verified receiver at `/webhooks/deapi` and the job registry the poller waits on. Only mounted when `DEAPI_WEBHOOKS_INTERNAL` is set
 
 ### Tool Implementations (`src/tools/`)
 
 Tools are organized by category:
-- `audio.py` - Audio transcription, TTS, and music generation (8 tools)
+- `audio.py` - Audio transcription, TTS, and music generation (12 tools)
 - `image.py` - Image generation, OCR, background removal, upscaling (10 tools)
-- `video.py` - Video generation, audio-to-video, and video replace (8 tools)
+- `video.py` - Video generation, image-to-video, audio-to-video, upscale, replace (12 tools)
 - `embedding.py` - Text embeddings (2 tools)
 - `utility.py` - Balance, models, job status (3 tools)
-- `_price_helpers.py` - Shared helper for price calculation parameter resolution
+- `prompt.py` - Prompt enhancement tools (2 tools, registered in `server_remote.py`)
+- `_price_helpers.py` - Resolves unset parameters from the model card, for price and generation tools alike
 
 ### Key Patterns
 
@@ -65,14 +67,16 @@ Tools are organized by category:
 - **Async polling**: `PollingManager` polls job status with type-specific strategies (audio: 1-5s, image: 2-8s, video: 5-30s)
 - **Error handling**: `DeapiAPIError` for API errors; tools always return `{"success": bool, "error"?: str, "result_url"?: str, "job_id"?: str}`
 - **Model cache**: Middleware fetches available models on first `list_tools` call and enriches tool descriptions
-- **Price helpers**: `resolve_generation_params()` in `_price_helpers.py` pulls defaults (seed, guidance, steps, dimensions) from model cache for price calculation tools
+- **Webhooks**: two independent features. Callers may pass `webhook_url`/`webhook_secret` to any generation tool (validated once in `DeapiClient.submit_job`); the API notifies *their* systems. Separately, with `DEAPI_WEBHOOKS_INTERNAL` the server registers itself and the poller waits on the callback instead of sleeping, polling only every `webhook_fallback_poll_interval` as a safety net. The API takes one webhook per job, so a caller's URL wins and that job polls normally. The callback is a wake-up signal only — the tool always makes one final `get_job_status()`, because the webhook payload carries `result_url` but not inline `result`
+- **Card-driven defaults**: `steps`, `fps`, `frames`, `width`, `height` and `guidance` have no fixed defaults in the tools — the API requires them and validates them against the model card, and no single number suits every model (Flux1schnell caps `steps` at 10, Ltxv fixes `fps` at 30, Ltx2 at 24). Generation tools call `ensure_model_cache()` then `resolve_from_card()`; price tools use `resolve_generation_params()`, which also guesses when the card is silent
+- **Form booleans**: a multipart field is a string, and Laravel's built-in `boolean` rule accepts only `"1"`/`"0"` — always render with `form_bool()` from `src/utils.py`
 
 ## Adding New Tools
 
 1. Check the OpenAPI spec at https://docs.deapi.ai/ for endpoint details
 2. Add request/response schemas to `src/schemas.py` if needed
 3. Create tool function in the appropriate file under `src/tools/`
-4. Register in `src/server_remote.py` using `@mcp.tool()` decorator
+4. Register in `src/server_remote.py` with `mcp.tool()(your_function)` — registration is call-style at module level, NOT the `@mcp.tool()` decorator
 5. Tool must:
    - NOT accept `deapi_api_token` parameter (handled by server auth)
    - Use `get_client()` to get the authenticated client
@@ -96,6 +100,13 @@ DEAPI_RETRY_BACKOFF_FACTOR=2.0
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
 DEAPI_POLLING_AUDIO__MAX_DELAY=5.0
 DEAPI_POLLING_AUDIO__TIMEOUT=300.0
+
+# Internal completion webhooks (see src/webhooks.py). Off by default.
+# Receiver URL must be reachable from api.deapi.ai; half-configured refuses to start.
+DEAPI_WEBHOOKS_INTERNAL=false
+DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
+DEAPI_WEBHOOK_SECRET=<32-255 chars>
+DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 ```
 
 ## Testing Notes
@@ -106,7 +117,11 @@ DEAPI_POLLING_AUDIO__TIMEOUT=300.0
 
 ## Important Notes
 
-- Always check model's `info.features.supports_guidance` before setting `guidance_scale`
-  - `supports_guidance="0"`: Use `guidance_scale=0` (or value from `defaults.guidance`)
-  - `supports_guidance="1"`: Use any value within `limits.min_guidance` to `limits.max_guidance`
+- The API field is **`guidance`**, not `guidance_scale`. `guidance_scale` is only the tools' own
+  parameter name; a payload key of `guidance_scale` is silently dropped.
+- `supports_guidance` is `False` on every model in the catalogue, so guidance has no effect today.
+  Leave it unset and the model's `info.defaults` applies. Re-check this before assuming it still
+  holds — the code must start honouring it the day a model ships with it enabled.
+- An unknown field is accepted with `200` and silently discarded; only a bad value on a *known*
+  field returns `422`. Verify new fields against the API's validation rules, not by observing a `200`.
 - After every code change, run tests and linter before committing

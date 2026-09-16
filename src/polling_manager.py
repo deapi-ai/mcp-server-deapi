@@ -3,16 +3,13 @@
 import asyncio
 import time
 from typing import Optional
+
 from fastmcp import Context
 
-from .config import settings, PollingConfig
-from .deapi_client import DeapiClient, DeapiAPIError
+from .config import PollingConfig, settings
+from .deapi_client import DeapiAPIError, DeapiClient
 from .schemas import JobStatus, JobStatusResponse, ToolResult
-
-
-class PollingTimeoutError(Exception):
-    """Raised when polling times out before job completes."""
-    pass
+from .webhooks import registry
 
 
 class PollingManager:
@@ -28,6 +25,27 @@ class PollingManager:
         self.client = client
         self.job_type = job_type
         self.config: PollingConfig = settings.get_polling_config(job_type)
+
+    async def _wait_before_next_poll(self, job_id: str, delay: float) -> None:
+        """Pause between status checks.
+
+        For a job the API will call us back about, block on that callback with
+        the fallback interval as a cap, so a completed job is noticed at once
+        and a lost callback still gets polled. Otherwise sleep the adaptive
+        delay as before.
+        """
+        if not registry.is_tracked(job_id):
+            await asyncio.sleep(delay)
+            return
+
+        event = registry.track(job_id)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=settings.webhook_fallback_poll_interval)
+        except asyncio.TimeoutError:
+            return  # safety-net poll
+        # Woken by the callback. Clear so a non-terminal wake (should not happen,
+        # but a replayed delivery could cause one) does not spin the loop.
+        event.clear()
 
     def _calculate_next_delay(self, current_delay: float, attempt: int) -> float:
         """Calculate next polling delay with exponential backoff.
@@ -54,12 +72,24 @@ class PollingManager:
             ctx: Optional MCP context for progress reporting
 
         Returns:
-            ToolResult with final job status and result
-
-        Raises:
-            PollingTimeoutError: If job doesn't complete within timeout
-            DeapiAPIError: If API request fails
+            ToolResult with final job status and result. Never raises for a job
+            that was submitted: a timeout, a 404, repeated API errors or a status
+            response this client cannot read all come back as a failed ToolResult
+            that still carries ``job_id``. The job may well finish anyway (and has
+            been paid for), and ``check_job_status`` can still reach it — but only
+            if the caller was told the id.
         """
+        try:
+            return await self._poll_until_complete(job_id, ctx)
+        finally:
+            # However the wait ended, nobody will listen for this job again.
+            registry.forget(job_id)
+
+    async def _poll_until_complete(
+        self,
+        job_id: str,
+        ctx: Optional[Context],
+    ) -> ToolResult:
         start_time = time.time()
         current_delay = self.config.initial_delay
         attempt = 0
@@ -75,12 +105,17 @@ class PollingManager:
             # Check timeout
             if elapsed > self.config.timeout:
                 error_msg = (
-                    f"Job {job_id} timed out after {elapsed:.1f}s "
-                    f"(max: {self.config.timeout}s)"
+                    f"Job {job_id} timed out after {elapsed:.1f}s (max: {self.config.timeout}s). "
+                    "The job may still complete; query it with check_job_status."
                 )
                 if ctx:
                     await ctx.error(error_msg)
-                raise PollingTimeoutError(error_msg)
+                return ToolResult(
+                    success=False,
+                    job_id=job_id,
+                    error=error_msg,
+                    metadata={"elapsed_time": elapsed, "attempts": attempt, "timed_out": True},
+                )
 
             # Poll job status
             try:
@@ -91,10 +126,7 @@ class PollingManager:
                 # Report progress if available and changed
                 if ctx and status_data.progress is not None:
                     if last_progress != status_data.progress:
-                        await ctx.report_progress(
-                            progress=status_data.progress,
-                            total=100.0
-                        )
+                        await ctx.report_progress(progress=status_data.progress, total=100.0)
                         last_progress = status_data.progress
 
                 # Log status updates
@@ -115,14 +147,21 @@ class PollingManager:
                         status=current_status,
                         result=status_data.result,
                         result_url=status_data.result_url,
+                        price=status_data.price,
+                        results_alt_formats=status_data.results_alt_formats,
+                        prompt_boost=status_data.prompt_boost,
                         metadata={
                             "elapsed_time": elapsed,
                             "attempts": attempt,
                         },
                     )
 
-                elif current_status == JobStatus.FAILED:
-                    error_msg = f"Job {job_id} failed"
+                elif current_status.is_failure:
+                    # Prefer the API's own reason. Falling back to a generic message
+                    # would discard the only information the caller can act on.
+                    error_msg = status_data.error_reason or f"Job {job_id} failed"
+                    if status_data.error_code:
+                        error_msg = f"{error_msg} ({status_data.error_code})"
                     if ctx:
                         await ctx.error(error_msg)
 
@@ -131,6 +170,9 @@ class PollingManager:
                         job_id=job_id,
                         status=current_status,
                         error=error_msg,
+                        error_code=status_data.error_code,
+                        retryable=status_data.retryable,
+                        refunded=status_data.refunded,
                         metadata={
                             "elapsed_time": elapsed,
                             "attempts": attempt,
@@ -138,7 +180,7 @@ class PollingManager:
                     )
 
                 # Job still in progress, wait before next poll
-                await asyncio.sleep(current_delay)
+                await self._wait_before_next_poll(job_id, current_delay)
                 current_delay = self._calculate_next_delay(current_delay, attempt)
 
             except DeapiAPIError as e:
@@ -170,6 +212,24 @@ class PollingManager:
                         error=str(e),
                         metadata={"elapsed_time": elapsed, "attempts": attempt},
                     )
+
+            except Exception as e:
+                # Anything else is a defect on this side of the wire — typically a
+                # status payload the schema does not model yet. Retrying cannot
+                # help, and letting it propagate would turn a paid, possibly
+                # finished job into an anonymous "Unexpected error".
+                error_msg = (
+                    f"Could not read the status of job {job_id}: {e}. "
+                    "The job may still complete; query it with check_job_status."
+                )
+                if ctx:
+                    await ctx.error(error_msg)
+                return ToolResult(
+                    success=False,
+                    job_id=job_id,
+                    error=error_msg,
+                    metadata={"elapsed_time": elapsed, "attempts": attempt},
+                )
 
     async def poll_with_context(
         self,
@@ -204,14 +264,6 @@ class PollingManager:
 
             return result
 
-        except PollingTimeoutError as e:
-            if ctx:
-                await ctx.error(f"{operation_name} timed out: {str(e)}")
-            return ToolResult(
-                success=False,
-                job_id=job_id,
-                error=str(e),
-            )
         except Exception as e:
             if ctx:
                 await ctx.error(f"Unexpected error in {operation_name}: {str(e)}")

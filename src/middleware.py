@@ -12,11 +12,11 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import mcp.types as mt
-from fastmcp.server.middleware import Middleware, MiddlewareContext, CallNext
-from fastmcp.tools.tool import Tool
+from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+from fastmcp.tools import Tool
 
 from .schemas import ModelInfo
 
@@ -53,6 +53,7 @@ INFERENCE_TYPE_TO_TOOLS: Dict[str, List[str]] = {
 # Model cache
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class _ModelCache:
     """Thread-safe cache for model information indexed by tool name."""
@@ -69,10 +70,34 @@ class _ModelCache:
 
 _cache = _ModelCache()
 
+DEFAULT_CACHE_TTL = 300.0
+
+
+async def ensure_model_cache(ttl: float = DEFAULT_CACHE_TTL) -> None:
+    """Populate or refresh the model cache when it is older than ``ttl``.
+
+    Tools call this before reading a card, so a call that arrives before any
+    tools/list — or right after a restart — still resolves the model's own
+    defaults instead of guessing. A failed fetch is logged and stamped like a
+    refresh, so an unreachable catalogue is retried once per TTL rather than
+    on every call.
+    """
+    if not _cache.is_stale(ttl):
+        return
+    async with _cache.lock:
+        if not _cache.is_stale(ttl):
+            return
+        try:
+            await _fetch_and_index_models()
+        except Exception:
+            logger.warning("Failed to fetch the model catalogue", exc_info=True)
+            _cache.last_fetched = time.monotonic()
+
 
 # ---------------------------------------------------------------------------
 # Public cache accessors
 # ---------------------------------------------------------------------------
+
 
 def get_cached_model(slug: str) -> Optional[ModelInfo]:
     """Look up a model by slug from the cache.
@@ -91,6 +116,7 @@ def get_cached_models_for_tool(tool_name: str) -> List[ModelInfo]:
 # ---------------------------------------------------------------------------
 # Formatting helpers
 # ---------------------------------------------------------------------------
+
 
 def _format_model_info(model: ModelInfo) -> str:
     """Format a single model into a concise one-line description.
@@ -112,10 +138,13 @@ def _format_model_info(model: ModelInfo) -> str:
     max_steps = limits.get("max_steps")
     default_steps = defaults.get("steps")
     if min_steps is not None and max_steps is not None:
-        step_str = f"steps={min_steps}-{max_steps}"
-        if default_steps is not None:
-            step_str += f" (default {default_steps})"
-        parts.append(step_str)
+        if str(min_steps) == str(max_steps):
+            parts.append(f"steps={min_steps} (fixed)")
+        else:
+            step_str = f"steps={min_steps}-{max_steps}"
+            if default_steps is not None:
+                step_str += f" (default {default_steps})"
+            parts.append(step_str)
 
     # Size (width x height)
     min_w = limits.get("min_width")
@@ -135,10 +164,13 @@ def _format_model_info(model: ModelInfo) -> str:
         max_g = limits.get("max_guidance")
         default_g = defaults.get("guidance")
         if min_g is not None and max_g is not None:
-            g_str = f"guidance={min_g}-{max_g}"
-            if default_g is not None:
-                g_str += f" (default {default_g})"
-            parts.append(g_str)
+            if str(min_g) == str(max_g):
+                parts.append(f"guidance={min_g} (fixed)")
+            else:
+                g_str = f"guidance={min_g}-{max_g}"
+                if default_g is not None:
+                    g_str += f" (default {default_g})"
+                parts.append(g_str)
 
     # FPS (video models)
     min_fps = limits.get("min_fps")
@@ -167,13 +199,164 @@ def _format_model_info(model: ModelInfo) -> str:
     if min_bpm is not None and max_bpm is not None:
         parts.append(f"bpm={min_bpm}-{max_bpm}")
 
+    # Bounds the API enforces with a 422 that the LLM has no other way to know.
+    # Each is shown only when the card publishes it (many are null), and each
+    # maps to an error already observed against the live API.
+    parts.extend(_format_request_bounds(limits))
+
     # LoRAs
     if model.loras:
         parts.append(f"{len(model.loras)} LoRAs available")
 
-    if parts:
-        return f"  - `{model.slug}`: {', '.join(parts)}"
-    return f"  - `{model.slug}`"
+    # TTS: mode, output format, then languages and voices on their own line
+    tts_line = _format_tts_languages(model, features, limits)
+    if tts_line:
+        mode = next(
+            (m for f, m in _TTS_MODE_FEATURES if str(features.get(f)).lower() in ("1", "true")),
+            None,
+        )
+        if mode:
+            parts.append(f"mode={mode}")
+        fmts = limits.get("output_formats")
+        if isinstance(fmts, list) and fmts:
+            parts.append(f"format={'/'.join(map(str, fmts))}")
+
+    line = f"  - `{model.slug}`: {', '.join(parts)}" if parts else f"  - `{model.slug}`"
+    return f"{line}\n{tts_line}" if tts_line else line
+
+
+def _range(limits: dict, lo_key: str, hi_key: str, label: str, unit: str = "") -> Optional[str]:
+    """'label=lo-hi' when the card publishes both ends, else None."""
+    lo, hi = limits.get(lo_key), limits.get(hi_key)
+    if lo is None and hi is None:
+        return None
+    if lo is not None and hi is not None:
+        if str(lo) == str(hi):
+            return f"{label}={lo}{unit} (fixed)"
+        return f"{label}={lo}-{hi}{unit}"
+    return f"{label}≤{hi}{unit}" if hi is not None else f"{label}≥{lo}{unit}"
+
+
+def _format_request_bounds(limits: dict) -> List[str]:
+    """Per-request limits the API validates, grouped by the tool they affect.
+
+    Kept to the ones that produce a 422 the LLM could not have predicted:
+    - images: dimension multiples, pixel/side/ratio caps, input-image count,
+      accepted quality tiers (1024x1024 on a 1,032,192-px model was a live 422)
+    - TTS: text length, speed, sample rate (our Field said speed 0.1-3.0;
+      Kokoro accepts 0.5-2)
+    - transcription: which ts_level values the model implements
+      (WhisperLargeV3 is segment-only; word needs WhisperLargeV3Ct2)
+    - video / upscale / music / embedding: their own caps
+    """
+    out: List[str] = []
+
+    # --- images
+    step = limits.get("resolution_step") or limits.get("dimension_multiple")
+    if step:
+        out.append(f"w/h multiple of {step}")
+    if limits.get("max_pixels"):
+        out.append(f"≤{limits['max_pixels'] / 1e6:.2f}Mpx")
+    if limits.get("max_side"):
+        out.append(f"side≤{limits['max_side']}")
+    if limits.get("max_ratio"):
+        out.append(f"aspect≤{limits['max_ratio']}")
+    if limits.get("max_input_images"):
+        out.append(f"up to {limits['max_input_images']} input image(s)")
+    if limits.get("quality_options"):
+        out.append(f"quality: {'|'.join(map(str, limits['quality_options']))}")
+
+    # --- TTS
+    for item in (
+        _range(limits, "min_text", "max_text", "text", " chars"),
+        _range(limits, "min_speed", "max_speed", "speed"),
+    ):
+        if item:
+            out.append(item)
+    # The card calls this `available_ratios`; on every TTS model it holds sample rates.
+    if limits.get("available_ratios"):
+        out.append(f"sample_rate: {'|'.join(map(str, limits['available_ratios']))}")
+
+    # --- transcription
+    if limits.get("timestamp_levels"):
+        out.append(f"ts_level: {'|'.join(map(str, limits['timestamp_levels']))}")
+
+    # --- video / upscale / music / embedding
+    if limits.get("max_video_duration_seconds"):
+        out.append(f"video≤{limits['max_video_duration_seconds']}s")
+    for item in (
+        _range(limits, "min_scale", "max_scale", "scale", "x"),
+        _range(limits, "min_caption", "max_caption", "caption", " chars"),
+    ):
+        if item:
+            out.append(item)
+    if limits.get("max_input_tokens"):
+        out.append(f"≤{limits['max_input_tokens']} tokens/input")
+    return out
+
+
+# Which feature flag names which TTS mode. Each model advertises exactly one.
+_TTS_MODE_FEATURES = (
+    ("supports_voice_clone", "voice_clone"),
+    ("supports_voice_design", "voice_design"),
+    ("supports_custom_voice", "custom_voice"),
+)
+
+_VOICES_SHOWN_PER_LANGUAGE = 5
+
+
+def _format_tts_languages(model: ModelInfo, features: dict, limits: dict) -> Optional[str]:
+    """One indented line listing a TTS model's languages and voice slugs.
+
+    The `lang` and `voice` values are per-model and not guessable — Kokoro
+    takes 'en-us' + 'af_alloy', the Qwen3 models take 'English' — so without
+    this an LLM has no way to form a valid request. Kept compact: voices are
+    capped per language, and a model whose every language offers the same
+    single voice (Chatterbox: 23 languages, all 'Default') is collapsed.
+    """
+    if not model.languages:
+        return None
+
+    langs = model.languages
+    voice_sets = [tuple(v.slug for v in lang.voices) for lang in langs]
+
+    # Voice-cloning / voice-design: languages only, the voice comes from elsewhere
+    if all(not vs for vs in voice_sets):
+        is_clone = str(features.get("supports_voice_clone")).lower() in ("1", "true")
+        src = "ref_audio" if is_clone else "instruct"
+        # The API rejects a reference clip outside this window; stating it here
+        # saves a failed call (a 4.8s sample against a 5s minimum is a real case).
+        lo, hi = limits.get("min_ref_audio_duration"), limits.get("max_ref_audio_duration")
+        bound = f", {lo}-{hi}s" if is_clone and lo is not None and hi is not None else ""
+        return f"      langs: {', '.join(lang.slug for lang in langs)} (voice from {src}{bound})"
+
+    # Same voice list in every language that has one: list it once. Covers
+    # Chatterbox (23 languages, all 'default') and the Qwen3 CustomVoice model
+    # (the same named voices in every language).
+    distinct = {vs for vs in voice_sets if vs}
+    if len(distinct) == 1:
+        voices = list(next(iter(distinct)))
+        shown = ", ".join(voices[:_VOICES_SHOWN_PER_LANGUAGE])
+        more = len(voices) - _VOICES_SHOWN_PER_LANGUAGE
+        suffix = f", +{more}" if more > 0 else ""
+        voiceless = [lang.slug for lang, vs in zip(langs, voice_sets) if not vs]
+        note = f" (no voice listed for: {', '.join(voiceless)})" if voiceless else ""
+        return (
+            f"      langs: {', '.join(lang.slug for lang in langs)} ({len(langs)}); "
+            f"voices ({len(voices)}, same in every language): {shown}{suffix}{note}"
+        )
+
+    chunks = []
+    for lang in langs:
+        slugs = [v.slug for v in lang.voices]
+        if not slugs:
+            chunks.append(lang.slug)
+            continue
+        shown = ", ".join(slugs[:_VOICES_SHOWN_PER_LANGUAGE])
+        more = len(slugs) - _VOICES_SHOWN_PER_LANGUAGE
+        suffix = f", +{more}" if more > 0 else ""
+        chunks.append(f"{lang.slug} [{len(slugs)}: {shown}{suffix}]")
+    return "      langs: " + "; ".join(chunks)
 
 
 def _build_enrichment_block(models: List[ModelInfo]) -> str:
@@ -189,6 +372,7 @@ def _build_enrichment_block(models: List[ModelInfo]) -> str:
 # ---------------------------------------------------------------------------
 # Model fetching & indexing
 # ---------------------------------------------------------------------------
+
 
 async def _fetch_and_index_models() -> None:
     """Fetch models from deAPI and index by tool name."""
@@ -228,6 +412,7 @@ async def _fetch_and_index_models() -> None:
 # Middleware
 # ---------------------------------------------------------------------------
 
+
 class ModelEnrichmentMiddleware(Middleware):
     """Middleware that enriches tool descriptions with available model info.
 
@@ -236,26 +421,13 @@ class ModelEnrichmentMiddleware(Middleware):
     cache to avoid fetching models on every request.
     """
 
-    def __init__(self, ttl: float = 300.0):
+    def __init__(self, ttl: float = DEFAULT_CACHE_TTL):
         super().__init__()
         self._ttl = ttl
 
     async def _ensure_cache_fresh(self) -> None:
-        """Refresh model cache if stale, using double-check locking."""
-        if not _cache.is_stale(self._ttl):
-            return
-        async with _cache.lock:
-            if not _cache.is_stale(self._ttl):
-                return
-            try:
-                await _fetch_and_index_models()
-            except Exception:
-                logger.warning(
-                    "Failed to fetch models for description enrichment",
-                    exc_info=True,
-                )
-                # Update timestamp even on failure to prevent retry storm
-                _cache.last_fetched = time.monotonic()
+        """Refresh model cache if stale."""
+        await ensure_model_cache(self._ttl)
 
     async def on_list_tools(
         self,
@@ -276,9 +448,7 @@ class ModelEnrichmentMiddleware(Middleware):
             if enrichment:
                 try:
                     new_desc = (tool.description or "") + "\n\n" + enrichment
-                    enriched.append(
-                        tool.model_copy(update={"description": new_desc})
-                    )
+                    enriched.append(tool.model_copy(update={"description": new_desc}))
                 except Exception:
                     logger.warning("Failed to enrich tool %s", tool.name, exc_info=True)
                     enriched.append(tool)

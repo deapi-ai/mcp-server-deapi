@@ -4,8 +4,6 @@ This module implements FastMCP's AuthProvider interface to properly integrate
 JWT/Bearer token authentication into the MCP server.
 """
 
-from typing import Optional
-
 from fastmcp.server.auth import AccessToken, AuthProvider
 
 from .auth import current_deapi_token
@@ -42,6 +40,7 @@ class DeapiAuthProvider(AuthProvider):
             AccessToken object if valid, None if invalid
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         if token is None:

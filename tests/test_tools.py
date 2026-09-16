@@ -7,9 +7,9 @@ Verifies:
 
 import base64
 import io
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # Helpers
@@ -80,8 +80,10 @@ class TestAudioTranscriptionBugFix:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import audio_transcription
 
             result = await audio_transcription(
@@ -98,8 +100,9 @@ class TestAudioTranscriptionBugFix:
         assert call_kwargs.kwargs.get("endpoint") == "audio/transcriptions"
         assert "data" in call_kwargs.kwargs, "Must use 'data' param (multipart form)"
         assert "files" in call_kwargs.kwargs, "Must use 'files' param (multipart file)"
-        assert "json_data" not in call_kwargs.kwargs or call_kwargs.kwargs["json_data"] is None, \
-            "Must NOT use json_data (was the bug)"
+        assert (
+            "json_data" not in call_kwargs.kwargs or call_kwargs.kwargs["json_data"] is None
+        ), "Must NOT use json_data (was the bug)"
 
     @pytest.mark.asyncio
     async def test_form_data_boolean_serialization(self):
@@ -109,8 +112,10 @@ class TestAudioTranscriptionBugFix:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import audio_transcription
 
             await audio_transcription(
@@ -121,8 +126,9 @@ class TestAudioTranscriptionBugFix:
 
         call_kwargs = mock_client.submit_job.call_args.kwargs
         form_data = call_kwargs["data"]
-        assert form_data["include_ts"] == "false"
-        assert form_data["return_result_in_response"] == "true"
+        # "1"/"0" is the only spelling Laravel's built-in `boolean` rule accepts in a form field.
+        assert form_data["include_ts"] == "0"
+        assert form_data["return_result_in_response"] == "1"
 
     @pytest.mark.asyncio
     async def test_files_contain_source_file_field(self):
@@ -132,8 +138,10 @@ class TestAudioTranscriptionBugFix:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import audio_transcription
 
             await audio_transcription(audio=make_base64_audio(), include_ts=True)
@@ -162,8 +170,10 @@ class TestImageToTextBugFix:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.image.get_client", return_value=mock_client), \
-             patch("src.tools.image.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.image.get_client", return_value=mock_client),
+            patch("src.tools.image.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.image import image_to_text
 
             result = await image_to_text(
@@ -177,8 +187,9 @@ class TestImageToTextBugFix:
         assert call_kwargs.kwargs.get("endpoint") == "images/ocr"
         assert "data" in call_kwargs.kwargs, "Must use 'data' param (multipart form)"
         assert "files" in call_kwargs.kwargs, "Must use 'files' param (multipart file)"
-        assert "json_data" not in call_kwargs.kwargs or call_kwargs.kwargs["json_data"] is None, \
-            "Must NOT use json_data (was the bug)"
+        assert (
+            "json_data" not in call_kwargs.kwargs or call_kwargs.kwargs["json_data"] is None
+        ), "Must NOT use json_data (was the bug)"
 
     @pytest.mark.asyncio
     async def test_form_data_contains_model_and_format(self):
@@ -187,8 +198,10 @@ class TestImageToTextBugFix:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.image.get_client", return_value=mock_client), \
-             patch("src.tools.image.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.image.get_client", return_value=mock_client),
+            patch("src.tools.image.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.image import image_to_text
 
             await image_to_text(
@@ -210,8 +223,10 @@ class TestImageToTextBugFix:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.image.get_client", return_value=mock_client), \
-             patch("src.tools.image.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.image.get_client", return_value=mock_client),
+            patch("src.tools.image.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.image import image_to_text
 
             await image_to_text(image=make_base64_image(), model="test")
@@ -271,8 +286,10 @@ class TestTextToEmbedding:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.embedding.get_client", return_value=mock_client), \
-             patch("src.tools.embedding.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.embedding.get_client", return_value=mock_client),
+            patch("src.tools.embedding.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.embedding import text_to_embedding
 
             result = await text_to_embedding(input="Hello world")
@@ -291,8 +308,10 @@ class TestTextToEmbedding:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.embedding.get_client", return_value=mock_client), \
-             patch("src.tools.embedding.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.embedding.get_client", return_value=mock_client),
+            patch("src.tools.embedding.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.embedding import text_to_embedding
 
             await text_to_embedding(input=["Hello", "World"])
@@ -307,8 +326,10 @@ class TestTextToEmbedding:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.embedding.get_client", return_value=mock_client), \
-             patch("src.tools.embedding.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.embedding.get_client", return_value=mock_client),
+            patch("src.tools.embedding.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.embedding import text_to_embedding
 
             await text_to_embedding(input="test")
@@ -396,8 +417,10 @@ class TestVideoRemoveBackground:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import video_remove_background
 
             result = await video_remove_background(
@@ -423,8 +446,10 @@ class TestVideoRemoveBackground:
         mock_polling_instance.poll_until_complete = AsyncMock(return_value=mock_poll_result)
         mock_polling_cls.return_value = mock_polling_instance
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", mock_polling_cls):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", mock_polling_cls),
+        ):
             from src.tools.video import video_remove_background
 
             await video_remove_background(video=make_base64_video(), model="test")
@@ -462,8 +487,10 @@ class TestVideoUpscale:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import video_upscale
 
             result = await video_upscale(
@@ -488,8 +515,10 @@ class TestVideoUpscale:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import video_upscale
 
             await video_upscale(
@@ -564,8 +593,10 @@ class TestVideoReplace:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import video_replace
 
             result = await video_replace(
@@ -597,8 +628,10 @@ class TestVideoReplace:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import video_replace
 
             # Without optional params
@@ -620,8 +653,10 @@ class TestVideoReplace:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import video_replace
 
             await video_replace(
@@ -645,8 +680,10 @@ class TestVideoReplace:
         mock_polling_instance.poll_until_complete = AsyncMock(return_value=mock_poll_result)
         mock_polling_cls.return_value = mock_polling_instance
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", mock_polling_cls):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", mock_polling_cls),
+        ):
             from src.tools.video import video_replace
 
             await video_replace(
@@ -845,6 +882,7 @@ class TestErrorHandling:
         """text_to_embedding should catch DeapiAPIError."""
         mock_client = make_mock_client()
         from src.deapi_client import DeapiAPIError
+
         mock_client.submit_job.side_effect = DeapiAPIError("Auth failed", status_code=401)
 
         with patch("src.tools.embedding.get_client", return_value=mock_client):
@@ -869,8 +907,10 @@ class TestTextToMusic:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import text_to_music
 
             result = await text_to_music(
@@ -908,8 +948,10 @@ class TestTextToMusic:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import text_to_music
 
             await text_to_music(
@@ -938,8 +980,10 @@ class TestTextToMusic:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import text_to_music
 
             await text_to_music(
@@ -964,8 +1008,10 @@ class TestTextToMusic:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import text_to_music
 
             await text_to_music(
@@ -988,8 +1034,10 @@ class TestTextToMusic:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.audio import text_to_music
 
             await text_to_music(
@@ -1015,13 +1063,19 @@ class TestTextToMusic:
         mock_polling_instance.poll_until_complete = AsyncMock(return_value=mock_poll_result)
         mock_polling_cls.return_value = mock_polling_instance
 
-        with patch("src.tools.audio.get_client", return_value=mock_client), \
-             patch("src.tools.audio.PollingManager", mock_polling_cls):
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", mock_polling_cls),
+        ):
             from src.tools.audio import text_to_music
 
             await text_to_music(
-                caption="test", model="test", lyrics="test",
-                duration=10, inference_steps=8, guidance_scale=0.0,
+                caption="test",
+                model="test",
+                lyrics="test",
+                duration=10,
+                inference_steps=8,
+                guidance_scale=0.0,
             )
 
         mock_polling_cls.assert_called_once_with(mock_client, job_type="audio")
@@ -1078,8 +1132,10 @@ class TestAudioToVideo:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import audio_to_video
 
             result = await audio_to_video(
@@ -1121,8 +1177,10 @@ class TestAudioToVideo:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import audio_to_video
 
             await audio_to_video(
@@ -1150,8 +1208,10 @@ class TestAudioToVideo:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import audio_to_video
 
             await audio_to_video(
@@ -1176,8 +1236,10 @@ class TestAudioToVideo:
         mock_polling = MagicMock()
         mock_polling.poll_until_complete = AsyncMock(return_value=mock_poll_result)
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", return_value=mock_polling):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", return_value=mock_polling),
+        ):
             from src.tools.video import audio_to_video
 
             await audio_to_video(
@@ -1206,13 +1268,20 @@ class TestAudioToVideo:
         mock_polling_instance.poll_until_complete = AsyncMock(return_value=mock_poll_result)
         mock_polling_cls.return_value = mock_polling_instance
 
-        with patch("src.tools.video.get_client", return_value=mock_client), \
-             patch("src.tools.video.PollingManager", mock_polling_cls):
+        with (
+            patch("src.tools.video.get_client", return_value=mock_client),
+            patch("src.tools.video.PollingManager", mock_polling_cls),
+        ):
             from src.tools.video import audio_to_video
 
             await audio_to_video(
-                prompt="test", model="test", audio=make_base64_audio(),
-                width=512, height=512, frames=60, fps=24,
+                prompt="test",
+                model="test",
+                audio=make_base64_audio(),
+                width=512,
+                height=512,
+                frames=60,
+                fps=24,
             )
 
         mock_polling_cls.assert_called_once_with(mock_client, job_type="video")
@@ -1269,10 +1338,12 @@ class TestPromptBooster:
     @pytest.mark.asyncio
     async def test_text_only_call_uses_post_sync(self):
         mock_client = make_mock_client()
-        mock_client.post_sync = AsyncMock(return_value={
-            "prompt": "an enhanced beautiful landscape",
-            "negative_prompt": None,
-        })
+        mock_client.post_sync = AsyncMock(
+            return_value={
+                "prompt": "an enhanced beautiful landscape",
+                "negative_prompt": None,
+            }
+        )
 
         with patch("src.tools.prompt.get_client", return_value=mock_client):
             from src.tools.prompt import prompt_booster
@@ -1321,6 +1392,7 @@ class TestPromptBooster:
     async def test_api_error_returned_in_dict(self):
         mock_client = make_mock_client()
         from src.deapi_client import DeapiAPIError
+
         mock_client.post_sync = AsyncMock(
             side_effect=DeapiAPIError("No guide available", status_code=422)
         )
@@ -1359,3 +1431,129 @@ class TestPromptBoosterPrice:
         call_kwargs = mock_client.calculate_price.call_args.kwargs
         assert call_kwargs["endpoint"] == "prompts/enhancements/price"
         assert call_kwargs["data"]["type"] == "images.generations"
+
+
+# =============================================================================
+# DEV-2019 P2: transcription tools must return result_url
+# =============================================================================
+
+
+class TestTranscriptionResultUrl:
+    """With return_result_in_response=False the API puts the transcript in a
+    file and returns its address in result_url. The tools used to drop that
+    address while still reporting success, leaving the caller with no way to
+    reach a transcript that had been produced and paid for.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tool_name,kwargs",
+        [
+            ("audio_transcription", {"audio": None, "include_ts": True}),
+            ("video_file_transcription", {"video": None, "include_ts": True}),
+            (
+                "video_url_transcription",
+                {"video_url": "https://example.com/v.mp4", "include_ts": True},
+            ),
+            (
+                "audio_url_transcription",
+                {"audio_url": "https://example.com/a.mp3", "include_ts": True},
+            ),
+        ],
+    )
+    async def test_returns_result_url_when_not_inline(self, tool_name, kwargs):
+        """All four transcription tools must surface result_url."""
+        import src.tools.audio as audio_mod
+
+        # The transcript went to a file, so result is empty and only the URL carries it.
+        poll_result = make_mock_poll_result(
+            result=None, result_url="https://results.deapi.ai/x.txt"
+        )
+        mock_client = make_mock_client()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=poll_result)
+
+        call_kwargs = dict(kwargs)
+        if "audio" in call_kwargs and call_kwargs["audio"] is None:
+            call_kwargs["audio"] = make_base64_audio()
+        if "video" in call_kwargs and call_kwargs["video"] is None:
+            call_kwargs["video"] = make_base64_video()
+        call_kwargs["return_result_in_response"] = False
+
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
+            tool = getattr(audio_mod, tool_name)
+            result = await tool(**call_kwargs)
+
+        assert result["success"] is True, f"{tool_name} should succeed"
+        assert (
+            result["result_url"] == "https://results.deapi.ai/x.txt"
+        ), f"{tool_name} dropped result_url — the caller cannot reach the transcript"
+
+    @pytest.mark.asyncio
+    async def test_embedding_returns_result_url_when_not_inline(self):
+        """text_to_embedding had the same defect: it never surfaced result_url."""
+        poll_result = make_mock_poll_result(
+            result=None, result_url="https://results.deapi.ai/vectors.json"
+        )
+        mock_client = make_mock_client()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=poll_result)
+
+        with (
+            patch("src.tools.embedding.get_client", return_value=mock_client),
+            patch("src.tools.embedding.PollingManager", return_value=mock_polling),
+        ):
+            from src.tools.embedding import text_to_embedding
+
+            result = await text_to_embedding(input="Hello", return_result_in_response=False)
+
+        assert result["success"] is True
+        assert result["result_url"] == "https://results.deapi.ai/vectors.json"
+
+    @pytest.mark.asyncio
+    async def test_empty_result_is_not_reported_as_success(self):
+        """done with neither result nor result_url must be an error, not a silent success."""
+        poll_result = make_mock_poll_result(result=None, result_url=None)
+        mock_client = make_mock_client()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=poll_result)
+
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
+            from src.tools.audio import audio_transcription
+
+            result = await audio_transcription(
+                audio=make_base64_audio(),
+                include_ts=True,
+                return_result_in_response=False,
+            )
+
+        assert result["success"] is False, "Empty success gives the caller no signal to act on"
+        assert (
+            result["job_id"] == "test-job-id-123"
+        ), "job_id must survive so the result stays reachable"
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_inline_transcript_still_returned(self):
+        """The inline path must keep working (no regression)."""
+        poll_result = make_mock_poll_result(result="hello world", result_url=None)
+        mock_client = make_mock_client()
+        mock_polling = MagicMock()
+        mock_polling.poll_until_complete = AsyncMock(return_value=poll_result)
+
+        with (
+            patch("src.tools.audio.get_client", return_value=mock_client),
+            patch("src.tools.audio.PollingManager", return_value=mock_polling),
+        ):
+            from src.tools.audio import audio_transcription
+
+            result = await audio_transcription(audio=make_base64_audio(), include_ts=True)
+
+        assert result["success"] is True
+        assert result["result"] == "hello world"

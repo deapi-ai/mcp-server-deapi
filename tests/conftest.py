@@ -1,7 +1,8 @@
 """Pytest configuration and fixtures for deAPI MCP Server tests."""
 
-import pytest
 from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 
 @pytest.fixture
@@ -30,18 +31,14 @@ def sample_job_response():
         "success": True,
         "job_id": "test-job-123",
         "status": "pending",
-        "message": "Job submitted successfully"
+        "message": "Job submitted successfully",
     }
 
 
 @pytest.fixture
 def sample_balance_response():
     """Sample balance response from deAPI."""
-    return {
-        "success": True,
-        "balance": 100.50,
-        "currency": "USD"
-    }
+    return {"success": True, "balance": 100.50, "currency": "USD"}
 
 
 @pytest.fixture
@@ -54,13 +51,13 @@ def sample_models_response():
                 "id": "stable-diffusion-xl",
                 "name": "Stable Diffusion XL",
                 "type": "image",
-                "capabilities": ["text-to-image", "image-to-image"]
+                "capabilities": ["text-to-image", "image-to-image"],
             },
             {
                 "id": "whisper-large-v3",
                 "name": "Whisper Large V3",
                 "type": "audio",
-                "capabilities": ["transcription"]
-            }
-        ]
+                "capabilities": ["transcription"],
+            },
+        ],
     }

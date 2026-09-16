@@ -2,23 +2,19 @@
 
 import base64
 import io
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from src.utils import (
+    fetch_audio_from_url,
+    fetch_video_from_url,
+    is_url,
     parse_audio_input,
     prepare_audio_upload,
     prepare_audio_upload_async,
-    parse_video_input,
-    prepare_video_upload,
     prepare_video_upload_async,
-    fetch_audio_from_url,
-    fetch_video_from_url,
-    parse_image_input,
-    prepare_image_upload_async,
-    is_url,
 )
-
 
 # =============================================================================
 # parse_audio_input tests

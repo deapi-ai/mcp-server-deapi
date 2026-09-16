@@ -18,8 +18,8 @@ Flow (Authorization Code):
 8. Auth middleware extracts Deapi token from JWT and forwards to Deapi API
 """
 
-import hashlib
 import base64
+import hashlib
 import logging
 import os
 import secrets
@@ -450,7 +450,10 @@ async def token_endpoint(request: Request) -> JSONResponse:
         except Exception as e:
             logger.error(f"Failed to create tokens: {str(e)}")
             return JSONResponse(
-                {"error": "server_error", "error_description": f"Failed to create tokens: {str(e)}"},
+                {
+                    "error": "server_error",
+                    "error_description": f"Failed to create tokens: {str(e)}",
+                },
                 status_code=500,
             )
 
@@ -523,7 +526,10 @@ async def token_endpoint(request: Request) -> JSONResponse:
         # Client secret IS the Deapi token
         if not client_secret or len(client_secret) < 10:
             return JSONResponse(
-                {"error": "invalid_client", "error_description": "Invalid client_secret (Deapi token)"},
+                {
+                    "error": "invalid_client",
+                    "error_description": "Invalid client_secret (Deapi token)",
+                },
                 status_code=401,
             )
 
@@ -626,7 +632,10 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
         logger.error(f"Invalid client_id: {client_id}")
         # Redirect with error if we have redirect_uri
         if redirect_uri:
-            error_params = {"error": "unauthorized_client", "error_description": "Invalid client_id"}
+            error_params = {
+                "error": "unauthorized_client",
+                "error_description": "Invalid client_id",
+            }
             if state:
                 error_params["state"] = state
             return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
@@ -635,19 +644,28 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
     # Validate redirect_uri
     if not redirect_uri:
         logger.error("Missing redirect_uri")
-        return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri is required"}, status_code=400)
+        return JSONResponse(
+            {"error": "invalid_request", "error_description": "redirect_uri is required"},
+            status_code=400,
+        )
 
     if not _validate_redirect_uri(redirect_uri):
         logger.error("Invalid redirect_uri scheme: %s", redirect_uri)
         return JSONResponse(
-            {"error": "invalid_request", "error_description": "redirect_uri must use http or https scheme"},
+            {
+                "error": "invalid_request",
+                "error_description": "redirect_uri must use http or https scheme",
+            },
             status_code=400,
         )
 
     # Validate response_type
     if response_type != "code":
         logger.error(f"Invalid response_type: {response_type}")
-        error_params = {"error": "unsupported_response_type", "error_description": "Only 'code' response_type is supported"}
+        error_params = {
+            "error": "unsupported_response_type",
+            "error_description": "Only 'code' response_type is supported",
+        }
         if state:
             error_params["state"] = state
         return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
@@ -655,7 +673,10 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
     # Validate PKCE challenge
     if not code_challenge or code_challenge_method != "S256":
         logger.error(f"Invalid PKCE: challenge={code_challenge}, method={code_challenge_method}")
-        error_params = {"error": "invalid_request", "error_description": "PKCE with S256 is required"}
+        error_params = {
+            "error": "invalid_request",
+            "error_description": "PKCE with S256 is required",
+        }
         if state:
             error_params["state"] = state
         return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
@@ -665,8 +686,14 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
 
     # Enforce max entries to prevent DoS via excessive authorize requests
     if len(_authorization_codes) >= AUTHORIZATION_CODE_MAX_ENTRIES:
-        logger.warning("Authorization code store at capacity (%d), rejecting new request", AUTHORIZATION_CODE_MAX_ENTRIES)
-        error_params = {"error": "server_error", "error_description": "Server is busy, please try again later"}
+        logger.warning(
+            "Authorization code store at capacity (%d), rejecting new request",
+            AUTHORIZATION_CODE_MAX_ENTRIES,
+        )
+        error_params = {
+            "error": "server_error",
+            "error_description": "Server is busy, please try again later",
+        }
         if state:
             error_params["state"] = state
         return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
