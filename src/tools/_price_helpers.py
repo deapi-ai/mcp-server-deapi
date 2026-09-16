@@ -1,8 +1,11 @@
-"""Helpers for building price calculation request payloads.
+"""Helpers for resolving request parameters from the model cache.
 
-Uses the global model cache (populated by ModelEnrichmentMiddleware) to
-resolve model defaults and features, so price tools don't need hardcoded
-parameter values.
+Uses the global model cache (populated by ModelEnrichmentMiddleware, or on
+demand via ``ensure_model_cache``) to resolve model defaults and features, so
+neither the price tools nor the generation tools need hardcoded parameter
+values. No single number suits every model: a ``steps`` of 20 is over the
+limit on Flux1schnell (max 10) and Flux_2_Klein (fixed at 4), and the video
+models each fix ``fps`` at a different value.
 """
 
 from typing import Any, Dict, Optional
@@ -11,9 +14,7 @@ from ..middleware import get_cached_model
 from ..schemas import ModelInfo
 
 
-def _get_model_info_section(
-    model: Optional[ModelInfo], section: str
-) -> Dict[str, Any]:
+def _get_model_info_section(model: Optional[ModelInfo], section: str) -> Dict[str, Any]:
     """Safely extract a section (defaults, features, limits) from model info."""
     if model is None or not isinstance(model.info, dict):
         return {}
@@ -34,6 +35,25 @@ def get_model_features(model_slug: str) -> Dict[str, Any]:
 def get_model_limits(model_slug: str) -> Dict[str, Any]:
     """Get limits dict from cached model info."""
     return _get_model_info_section(get_cached_model(model_slug), "limits")
+
+
+def resolve_from_card(model_slug: str, user_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill each unset parameter from the model card's defaults.
+
+    A user value always wins. A key the caller left unset and the card does
+    not default is omitted, so the API — which knows whether that model needs
+    it — can say so, rather than this client inventing a number that might be
+    out of range. Unlike ``resolve_generation_params`` nothing is guessed:
+    this is for the payload that actually runs the job.
+    """
+    defaults = get_model_defaults(model_slug)
+    resolved: Dict[str, Any] = {}
+    for key, value in user_params.items():
+        if value is None:
+            value = _to_number(defaults.get(key))
+        if value is not None:
+            resolved[key] = value
+    return resolved
 
 
 def resolve_generation_params(
@@ -62,7 +82,9 @@ def resolve_generation_params(
     # Fallback defaults when cache is empty (e.g., first request before
     # tools/list triggers the middleware cache population).
     _fallbacks = {
-        "width": 512, "height": 512, "steps": 4,
+        "width": 512,
+        "height": 512,
+        "steps": 4,
     }
 
     params: Dict[str, Any] = {}

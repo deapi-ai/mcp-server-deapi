@@ -3,7 +3,7 @@
 import base64
 import io
 import re
-from typing import Tuple, Optional
+from typing import Tuple
 
 import httpx
 
@@ -26,7 +26,7 @@ def parse_image_input(image_input: str) -> Tuple[bytes, str]:
         ValueError: If input format is invalid or URLs are provided
     """
     # Check if it's a data URI
-    data_uri_pattern = r'^data:image/(png|jpeg|jpg|gif|bmp|webp);base64,(.+)$'
+    data_uri_pattern = r"^data:image/(png|jpeg|jpg|gif|bmp|webp);base64,(.+)$"
     match = re.match(data_uri_pattern, image_input, re.IGNORECASE)
 
     if match:
@@ -35,8 +35,8 @@ def parse_image_input(image_input: str) -> Tuple[bytes, str]:
         base64_data = match.group(2)
 
         # Normalize mime type
-        if mime_subtype == 'jpeg':
-            mime_subtype = 'jpg'
+        if mime_subtype == "jpeg":
+            mime_subtype = "jpg"
 
         try:
             image_bytes = base64.b64decode(base64_data)
@@ -46,7 +46,7 @@ def parse_image_input(image_input: str) -> Tuple[bytes, str]:
             raise ValueError(f"Failed to decode base64 data: {str(e)}")
 
     # Check if it's a URL
-    if image_input.startswith(('http://', 'https://')):
+    if image_input.startswith(("http://", "https://")):
         raise ValueError(
             "URL inputs are not yet supported. Please provide image as a data URI "
             "(data:image/png;base64,...) or attach the image directly."
@@ -65,7 +65,9 @@ def parse_image_input(image_input: str) -> Tuple[bytes, str]:
         )
 
 
-def prepare_image_upload(image_input: str, field_name: str = "image") -> Tuple[str, Tuple[str, io.BytesIO, str]]:
+def prepare_image_upload(
+    image_input: str, field_name: str = "image"
+) -> Tuple[str, Tuple[str, io.BytesIO, str]]:
     """Prepare image for multipart/form-data upload.
 
     Args:
@@ -84,16 +86,16 @@ def prepare_image_upload(image_input: str, field_name: str = "image") -> Tuple[s
     image_bytes, filename = parse_image_input(image_input)
 
     # Extract mime type from filename extension
-    ext = filename.split('.')[-1].lower()
+    ext = filename.split(".")[-1].lower()
     mime_mapping = {
-        'png': 'image/png',
-        'jpg': 'image/jpeg',
-        'jpeg': 'image/jpeg',
-        'gif': 'image/gif',
-        'bmp': 'image/bmp',
-        'webp': 'image/webp',
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "bmp": "image/bmp",
+        "webp": "image/webp",
     }
-    mime_type = mime_mapping.get(ext, 'image/png')
+    mime_type = mime_mapping.get(ext, "image/png")
 
     # Create BytesIO object for httpx
     file_obj = io.BytesIO(image_bytes)
@@ -118,7 +120,7 @@ def parse_audio_input(audio_input: str) -> Tuple[bytes, str]:
         ValueError: If input format is invalid
     """
     # Check if it's a data URI
-    data_uri_pattern = r'^data:audio/(aac|mp3|mpeg|ogg|wav|webm|flac|x-flac);base64,(.+)$'
+    data_uri_pattern = r"^data:audio/(aac|mp3|mpeg|ogg|wav|webm|flac|x-flac);base64,(.+)$"
     match = re.match(data_uri_pattern, audio_input, re.IGNORECASE)
 
     if match:
@@ -127,8 +129,8 @@ def parse_audio_input(audio_input: str) -> Tuple[bytes, str]:
 
         # Normalize mime subtypes
         ext_mapping = {
-            'mpeg': 'mp3',
-            'x-flac': 'flac',
+            "mpeg": "mp3",
+            "x-flac": "flac",
         }
         ext = ext_mapping.get(mime_subtype, mime_subtype)
 
@@ -140,7 +142,7 @@ def parse_audio_input(audio_input: str) -> Tuple[bytes, str]:
             raise ValueError(f"Failed to decode base64 audio data: {str(e)}")
 
     # Check if it's a URL (handled separately by fetch_audio_from_url)
-    if audio_input.startswith(('http://', 'https://')):
+    if audio_input.startswith(("http://", "https://")):
         raise ValueError(
             "URL inputs should be handled by fetch_audio_from_url. "
             "Use prepare_audio_upload_async for URL support."
@@ -176,7 +178,7 @@ def parse_video_input(video_input: str) -> Tuple[bytes, str]:
         ValueError: If input format is invalid or URLs are provided
     """
     # Check if it's a data URI
-    data_uri_pattern = r'^data:video/(mp4|avi|mov|webm|mkv|mpeg|mpg|flv|wmv);base64,(.+)$'
+    data_uri_pattern = r"^data:video/(mp4|avi|mov|webm|mkv|mpeg|mpg|flv|wmv);base64,(.+)$"
     match = re.match(data_uri_pattern, video_input, re.IGNORECASE)
 
     if match:
@@ -185,8 +187,8 @@ def parse_video_input(video_input: str) -> Tuple[bytes, str]:
         base64_data = match.group(2)
 
         # Normalize mime type
-        if mime_subtype == 'mpeg':
-            mime_subtype = 'mpg'
+        if mime_subtype == "mpeg":
+            mime_subtype = "mpg"
 
         try:
             video_bytes = base64.b64decode(base64_data)
@@ -196,7 +198,7 @@ def parse_video_input(video_input: str) -> Tuple[bytes, str]:
             raise ValueError(f"Failed to decode base64 video data: {str(e)}")
 
     # Check if it's a URL
-    if video_input.startswith(('http://', 'https://')):
+    if video_input.startswith(("http://", "https://")):
         raise ValueError(
             "URL inputs are not yet supported. Please provide video as a data URI "
             "(data:video/mp4;base64,...) or attach the video directly."
@@ -215,7 +217,9 @@ def parse_video_input(video_input: str) -> Tuple[bytes, str]:
         )
 
 
-def prepare_video_upload(video_input: str, field_name: str = "video") -> Tuple[str, Tuple[str, io.BytesIO, str]]:
+def prepare_video_upload(
+    video_input: str, field_name: str = "video"
+) -> Tuple[str, Tuple[str, io.BytesIO, str]]:
     """Prepare video for multipart/form-data upload.
 
     Args:
@@ -234,19 +238,19 @@ def prepare_video_upload(video_input: str, field_name: str = "video") -> Tuple[s
     video_bytes, filename = parse_video_input(video_input)
 
     # Extract mime type from filename extension
-    ext = filename.split('.')[-1].lower()
+    ext = filename.split(".")[-1].lower()
     mime_mapping = {
-        'mp4': 'video/mp4',
-        'avi': 'video/x-msvideo',
-        'mov': 'video/quicktime',
-        'webm': 'video/webm',
-        'mkv': 'video/x-matroska',
-        'mpeg': 'video/mpeg',
-        'mpg': 'video/mpeg',
-        'flv': 'video/x-flv',
-        'wmv': 'video/x-ms-wmv',
+        "mp4": "video/mp4",
+        "avi": "video/x-msvideo",
+        "mov": "video/quicktime",
+        "webm": "video/webm",
+        "mkv": "video/x-matroska",
+        "mpeg": "video/mpeg",
+        "mpg": "video/mpeg",
+        "flv": "video/x-flv",
+        "wmv": "video/x-ms-wmv",
     }
-    mime_type = mime_mapping.get(ext, 'video/mp4')
+    mime_type = mime_mapping.get(ext, "video/mp4")
 
     # Create BytesIO object for httpx
     file_obj = io.BytesIO(video_bytes)
@@ -254,7 +258,9 @@ def prepare_video_upload(video_input: str, field_name: str = "video") -> Tuple[s
     return field_name, (filename, file_obj, mime_type)
 
 
-def prepare_audio_upload(audio_input: str, field_name: str = "audio") -> Tuple[str, Tuple[str, io.BytesIO, str]]:
+def prepare_audio_upload(
+    audio_input: str, field_name: str = "audio"
+) -> Tuple[str, Tuple[str, io.BytesIO, str]]:
     """Prepare audio for multipart/form-data upload.
 
     Args:
@@ -267,25 +273,37 @@ def prepare_audio_upload(audio_input: str, field_name: str = "audio") -> Tuple[s
     """
     audio_bytes, filename = parse_audio_input(audio_input)
 
-    ext = filename.split('.')[-1].lower()
+    ext = filename.split(".")[-1].lower()
     mime_mapping = {
-        'mp3': 'audio/mpeg',
-        'wav': 'audio/wav',
-        'flac': 'audio/flac',
-        'ogg': 'audio/ogg',
-        'aac': 'audio/aac',
-        'webm': 'audio/webm',
+        "mp3": "audio/mpeg",
+        "wav": "audio/wav",
+        "flac": "audio/flac",
+        "ogg": "audio/ogg",
+        "aac": "audio/aac",
+        "webm": "audio/webm",
     }
-    mime_type = mime_mapping.get(ext, 'audio/mpeg')
+    mime_type = mime_mapping.get(ext, "audio/mpeg")
 
     file_obj = io.BytesIO(audio_bytes)
 
     return field_name, (filename, file_obj, mime_type)
 
 
+def form_bool(value: bool) -> str:
+    r"""Render a boolean for a multipart/form-data field.
+
+    A form field is always a string, and Laravel's built-in ``boolean`` rule
+    accepts only ``true/false/0/1`` and the strings ``"0"``/``"1"`` — so
+    ``"true"`` fails it with a 422 (``enhance_prompt`` on the image endpoints).
+    The API's own ``App\Rules\Boolean`` is laxer but also takes ``"1"``/``"0"``,
+    which makes this the one spelling every rule accepts.
+    """
+    return "1" if value else "0"
+
+
 def is_url(value: str) -> bool:
     """Check if the given string is a URL."""
-    return value.startswith(('http://', 'https://'))
+    return value.startswith(("http://", "https://"))
 
 
 async def fetch_image_from_url(url: str, timeout: float = 30.0) -> Tuple[bytes, str]:
@@ -307,26 +325,26 @@ async def fetch_image_from_url(url: str, timeout: float = 30.0) -> Tuple[bytes, 
             response.raise_for_status()
 
             # Get content type from response headers
-            content_type = response.headers.get('content-type', '').lower()
+            content_type = response.headers.get("content-type", "").lower()
 
             # Determine file extension from content type or URL
-            ext = 'png'  # default
-            if 'jpeg' in content_type or 'jpg' in content_type:
-                ext = 'jpg'
-            elif 'png' in content_type:
-                ext = 'png'
-            elif 'gif' in content_type:
-                ext = 'gif'
-            elif 'webp' in content_type:
-                ext = 'webp'
-            elif 'bmp' in content_type:
-                ext = 'bmp'
+            ext = "png"  # default
+            if "jpeg" in content_type or "jpg" in content_type:
+                ext = "jpg"
+            elif "png" in content_type:
+                ext = "png"
+            elif "gif" in content_type:
+                ext = "gif"
+            elif "webp" in content_type:
+                ext = "webp"
+            elif "bmp" in content_type:
+                ext = "bmp"
             else:
                 # Try to get extension from URL
                 url_lower = url.lower()
-                for img_ext in ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp']:
-                    if f'.{img_ext}' in url_lower:
-                        ext = 'jpg' if img_ext == 'jpeg' else img_ext
+                for img_ext in ["jpg", "jpeg", "png", "gif", "webp", "bmp"]:
+                    if f".{img_ext}" in url_lower:
+                        ext = "jpg" if img_ext == "jpeg" else img_ext
                         break
 
             filename = f"image.{ext}"
@@ -363,16 +381,16 @@ async def prepare_image_upload_async(
         image_bytes, filename = parse_image_input(image_input)
 
     # Extract mime type from filename extension
-    ext = filename.split('.')[-1].lower()
+    ext = filename.split(".")[-1].lower()
     mime_mapping = {
-        'png': 'image/png',
-        'jpg': 'image/jpeg',
-        'jpeg': 'image/jpeg',
-        'gif': 'image/gif',
-        'bmp': 'image/bmp',
-        'webp': 'image/webp',
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "bmp": "image/bmp",
+        "webp": "image/webp",
     }
-    mime_type = mime_mapping.get(ext, 'image/png')
+    mime_type = mime_mapping.get(ext, "image/png")
 
     # Create BytesIO object for httpx
     file_obj = io.BytesIO(image_bytes)
@@ -398,25 +416,25 @@ async def fetch_audio_from_url(url: str, timeout: float = 30.0) -> Tuple[bytes, 
             response = await client.get(url, follow_redirects=True)
             response.raise_for_status()
 
-            content_type = response.headers.get('content-type', '').lower()
+            content_type = response.headers.get("content-type", "").lower()
 
-            ext = 'mp3'  # default
-            if 'wav' in content_type:
-                ext = 'wav'
-            elif 'flac' in content_type:
-                ext = 'flac'
-            elif 'ogg' in content_type:
-                ext = 'ogg'
-            elif 'aac' in content_type:
-                ext = 'aac'
-            elif 'webm' in content_type:
-                ext = 'webm'
-            elif 'mpeg' in content_type or 'mp3' in content_type:
-                ext = 'mp3'
+            ext = "mp3"  # default
+            if "wav" in content_type:
+                ext = "wav"
+            elif "flac" in content_type:
+                ext = "flac"
+            elif "ogg" in content_type:
+                ext = "ogg"
+            elif "aac" in content_type:
+                ext = "aac"
+            elif "webm" in content_type:
+                ext = "webm"
+            elif "mpeg" in content_type or "mp3" in content_type:
+                ext = "mp3"
             else:
                 url_lower = url.lower()
-                for audio_ext in ['mp3', 'wav', 'flac', 'ogg', 'aac', 'webm']:
-                    if f'.{audio_ext}' in url_lower:
+                for audio_ext in ["mp3", "wav", "flac", "ogg", "aac", "webm"]:
+                    if f".{audio_ext}" in url_lower:
                         ext = audio_ext
                         break
 
@@ -449,16 +467,16 @@ async def prepare_audio_upload_async(
     else:
         audio_bytes, filename = parse_audio_input(audio_input)
 
-    ext = filename.split('.')[-1].lower()
+    ext = filename.split(".")[-1].lower()
     mime_mapping = {
-        'mp3': 'audio/mpeg',
-        'wav': 'audio/wav',
-        'flac': 'audio/flac',
-        'ogg': 'audio/ogg',
-        'aac': 'audio/aac',
-        'webm': 'audio/webm',
+        "mp3": "audio/mpeg",
+        "wav": "audio/wav",
+        "flac": "audio/flac",
+        "ogg": "audio/ogg",
+        "aac": "audio/aac",
+        "webm": "audio/webm",
     }
-    mime_type = mime_mapping.get(ext, 'audio/mpeg')
+    mime_type = mime_mapping.get(ext, "audio/mpeg")
 
     file_obj = io.BytesIO(audio_bytes)
 
@@ -483,27 +501,27 @@ async def fetch_video_from_url(url: str, timeout: float = 60.0) -> Tuple[bytes, 
             response = await client.get(url, follow_redirects=True)
             response.raise_for_status()
 
-            content_type = response.headers.get('content-type', '').lower()
+            content_type = response.headers.get("content-type", "").lower()
 
-            ext = 'mp4'  # default
-            if 'webm' in content_type:
-                ext = 'webm'
-            elif 'avi' in content_type or 'x-msvideo' in content_type:
-                ext = 'avi'
-            elif 'quicktime' in content_type or 'mov' in content_type:
-                ext = 'mov'
-            elif 'x-matroska' in content_type or 'mkv' in content_type:
-                ext = 'mkv'
-            elif 'mpeg' in content_type:
-                ext = 'mpg'
-            elif 'x-flv' in content_type:
-                ext = 'flv'
-            elif 'x-ms-wmv' in content_type:
-                ext = 'wmv'
+            ext = "mp4"  # default
+            if "webm" in content_type:
+                ext = "webm"
+            elif "avi" in content_type or "x-msvideo" in content_type:
+                ext = "avi"
+            elif "quicktime" in content_type or "mov" in content_type:
+                ext = "mov"
+            elif "x-matroska" in content_type or "mkv" in content_type:
+                ext = "mkv"
+            elif "mpeg" in content_type:
+                ext = "mpg"
+            elif "x-flv" in content_type:
+                ext = "flv"
+            elif "x-ms-wmv" in content_type:
+                ext = "wmv"
             else:
                 url_lower = url.lower()
-                for vid_ext in ['mp4', 'webm', 'avi', 'mov', 'mkv', 'mpg', 'flv', 'wmv']:
-                    if f'.{vid_ext}' in url_lower:
+                for vid_ext in ["mp4", "webm", "avi", "mov", "mkv", "mpg", "flv", "wmv"]:
+                    if f".{vid_ext}" in url_lower:
                         ext = vid_ext
                         break
 
@@ -536,19 +554,19 @@ async def prepare_video_upload_async(
     else:
         video_bytes, filename = parse_video_input(video_input)
 
-    ext = filename.split('.')[-1].lower()
+    ext = filename.split(".")[-1].lower()
     mime_mapping = {
-        'mp4': 'video/mp4',
-        'avi': 'video/x-msvideo',
-        'mov': 'video/quicktime',
-        'webm': 'video/webm',
-        'mkv': 'video/x-matroska',
-        'mpeg': 'video/mpeg',
-        'mpg': 'video/mpeg',
-        'flv': 'video/x-flv',
-        'wmv': 'video/x-ms-wmv',
+        "mp4": "video/mp4",
+        "avi": "video/x-msvideo",
+        "mov": "video/quicktime",
+        "webm": "video/webm",
+        "mkv": "video/x-matroska",
+        "mpeg": "video/mpeg",
+        "mpg": "video/mpeg",
+        "flv": "video/x-flv",
+        "wmv": "video/x-ms-wmv",
     }
-    mime_type = mime_mapping.get(ext, 'video/mp4')
+    mime_type = mime_mapping.get(ext, "video/mp4")
 
     file_obj = io.BytesIO(video_bytes)
 

@@ -1,6 +1,6 @@
 """Utility tools for deAPI MCP server."""
 
-from ..deapi_client import get_client, DeapiAPIError
+from ..deapi_client import DeapiAPIError, get_client
 
 
 async def get_balance() -> dict:
@@ -55,21 +55,23 @@ async def get_available_models() -> dict:
        - Use these when model has specific requirements
 
     4. **info.features**: Boolean flags (0=false, 1=true) indicating support:
-       - supports_guidance: If "0", you MUST set guidance_scale to the default (usually 0)
        - supports_steps: If "0", model has fixed steps
        - supports_negative_prompt: If "0", don't pass negative_prompt
        - supports_last_frame: If "1", img2video supports initial frame control
+       - supports_voice_clone / supports_voice_design / supports_custom_voice:
+         which TTS mode the model implements. It implements exactly one and
+         returns 422 for the others
+       - supports_guidance: no model in the catalogue currently sets this to
+         "1", so leave guidance unset and the model's own default is used
 
-    CRITICAL: Always check features.supports_guidance before setting guidance_scale!
-    - If supports_guidance="0": Use the value from defaults.guidance (usually 0)
-    - If supports_guidance="1": Can use any value within limits.min_guidance to limits.max_guidance
+    General rule: rather than assuming a value, omit the parameter and let the
+    model's info.defaults apply, or read the bound from info.limits.
 
     Example workflow for txt2video with LTX-Video model:
     1. Check inference_types includes "txt2video"
-    2. Check features.supports_guidance = "0" → must use guidance=0
-    3. Check limits.max_steps = "1" → must use steps=1
-    4. Check limits.min_fps = "30", max_fps = "30" → must use fps=30
-    5. Use defaults for other parameters (width=512, height=512, frames=120)
+    2. Check limits.max_steps = "1" → must use steps=1
+    3. Check limits.min_fps = "30", max_fps = "30" → must use fps=30
+    4. Use defaults for other parameters (width=512, height=512, frames=120)
 
     Returns:
         dict: Contains 'success', 'models' (list of model objects with name, slug,
@@ -81,10 +83,16 @@ async def get_available_models() -> dict:
             models_response = await client.get_models()
             models_list = models_response.data  # data is now directly a list
 
+            # Report the catalogue's own total rather than the length of what we
+            # happened to fetch: while those can differ, a count taken from the
+            # list would present a truncated page as the complete catalogue.
+            meta = models_response.meta
+            count = meta.total if meta and meta.total is not None else len(models_list)
+
             return {
                 "success": True,
-                "models": [model.model_dump(mode='json') for model in models_list],
-                "count": len(models_list),
+                "models": [model.model_dump(mode="json") for model in models_list],
+                "count": count,
             }
 
     except DeapiAPIError as e:
@@ -104,7 +112,10 @@ async def check_job_status(
         job_id: Job request ID (UUID) to check status for
 
     Returns:
-        dict: Contains 'success', job status, progress, and result if available
+        dict: Contains 'success', job status, progress, and the result if available.
+              A failed job reports success=False along with 'error_reason',
+              'error_code' and 'retryable' so the caller can decide whether to
+              resubmit, and 'refunded' so it knows whether it was charged.
     """
     try:
         client = get_client()
@@ -112,27 +123,54 @@ async def check_job_status(
             status_response = await client.get_job_status(job_id)
             status_data = status_response.data
 
+            # A failed job is not a successful status check with an empty result:
+            # reporting success here leaves the caller no signal to act on.
+            failed = status_data.status.is_failure
+
             result = {
-                "success": True,
+                "success": not failed,
                 "job_id": job_id,
                 "status": status_data.status.value,
             }
 
-            if status_data.progress is not None:
-                result["progress"] = status_data.progress
+            if failed:
+                result["error"] = status_data.error_reason or "Job failed"
 
-            if status_data.preview:
-                result["preview_url"] = status_data.preview
+            optional_fields = (
+                ("progress", status_data.progress),
+                ("result", status_data.result),
+                ("result_url", status_data.result_url),
+                ("results_alt_formats", status_data.results_alt_formats),
+                ("price", status_data.price),
+                ("error_code", status_data.error_code),
+                ("error_reason", status_data.error_reason),
+                ("retryable", status_data.retryable),
+                ("refunded", status_data.refunded),
+                ("failed_at", status_data.failed_at),
+                ("prompt_boosted", status_data.prompt_boosted),
+                (
+                    "prompt_boost",
+                    status_data.prompt_boost.model_dump() if status_data.prompt_boost else None,
+                ),
+                ("metadata", status_data.metadata),
+            )
+            for key, value in optional_fields:
+                if value is not None:
+                    result[key] = value
 
-            if status_data.result:
-                result["result"] = status_data.result
-
-            if status_data.result_url:
-                result["result_url"] = status_data.result_url
+            # The API's `preview` is a base64 PNG of the in-progress image, not a
+            # URL: ~20 KB of pixels an LLM cannot look at, on every status check.
+            # The key stays so the response shape does not change; the value is
+            # deliberately never filled.
+            result["preview_url"] = None
 
             return result
 
     except DeapiAPIError as e:
+        if e.status_code == 404:
+            # The API's own message names the Laravel model class; say what
+            # the caller can act on instead.
+            return {"success": False, "job_id": job_id, "error": f"Job {job_id} not found"}
         return {"success": False, "job_id": job_id, "error": f"API error: {str(e)}"}
     except Exception as e:
         return {"success": False, "job_id": job_id, "error": f"Unexpected error: {str(e)}"}

@@ -69,7 +69,15 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 ### Utility Tools
 - `get_balance` - Check account balance
 - `get_available_models` - List available AI models with specifications
-- `check_job_status` - Query async job status by ID
+- `check_job_status` - Query async job status by ID. A failed job reports `success: false` with `error_reason`, `error_code`, `retryable` and `refunded`
+
+### Webhooks
+
+Every generation tool accepts `webhook_url` (HTTPS) and an optional `webhook_secret` (32–255 chars). deAPI calls that URL when the job finishes, signed with `X-DeAPI-Signature: sha256=<HMAC-SHA256(secret, "<timestamp>.<body>")>`; the tool still returns the result to the caller as usual.
+
+### Model-driven defaults
+
+Generation parameters such as `width`, `height`, `steps`, `frames` and `fps` default to the selected model's own values when left unset — each model has different limits, so there is no fixed default that works everywhere. The `get_available_models` output and every tool description list each model's accepted ranges. Set `enhance_prompt: true` on `text_to_image`/`image_to_image` to let deAPI rewrite the prompt; the result then includes `prompt_boost` with the prompt actually used.
 
 ## Installation
 
@@ -231,11 +239,13 @@ Use audio_transcription with:
 - **DeapiClient** (`src/deapi_client.py`): HTTP client with auth forwarding and retry logic
 - **PollingManager** (`src/polling_manager.py`): Smart adaptive polling for async jobs
 - **Schemas** (`src/schemas.py`): Pydantic models for type safety
+- **Webhooks** (`src/webhooks.py`): optional HMAC-verified receiver for deAPI completion callbacks, so waiting tools wake on the callback instead of polling (`DEAPI_WEBHOOKS_INTERNAL`)
 - **Tools** (`src/tools/`): Organized tool implementations
   - `audio.py` - Audio transcription, TTS & music generation tools
   - `image.py` - Image generation, transformation, OCR, background removal & upscaling
-  - `video.py` - Video generation, audio-to-video & video replace tools
+  - `video.py` - Video generation, image/audio-to-video, upscale & replace tools
   - `embedding.py` - Text embedding tools
+  - `prompt.py` - Prompt booster tools
   - `utility.py` - Balance, models, status tools
 
 ### Smart Adaptive Polling
@@ -253,8 +263,8 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x).
 ### Error Handling
 
 - **HTTP Errors**: Automatic retry (3 attempts) with exponential backoff
-- **Timeouts**: Graceful handling with clear error messages
-- **Job Failures**: Detected and reported to the client
+- **Timeouts**: Reported as a failed result that still carries the `job_id`, so the job can be picked up with `check_job_status`
+- **Job Failures**: Reported with the API's reason, error code, and whether the job is retryable / was refunded
 - **API Errors**: Properly formatted error responses
 
 ## Configuration
@@ -275,7 +285,16 @@ DEAPI_RETRY_BACKOFF_FACTOR=2.0
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
 DEAPI_POLLING_AUDIO__MAX_DELAY=5.0
 DEAPI_POLLING_AUDIO__TIMEOUT=300.0
+
+# Internal completion webhooks (off by default). The receiver URL must be
+# reachable from api.deapi.ai; a half-configured set refuses to start.
+DEAPI_WEBHOOKS_INTERNAL=false
+DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
+DEAPI_WEBHOOK_SECRET=<32-255 chars>
+DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 ```
+
+With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally.
 
 ## Development
 
@@ -292,13 +311,16 @@ mcp-server-deapi/
 │   ├── auth.py                # Authentication middleware
 │   ├── fastmcp_auth.py        # FastMCP OAuth provider
 │   ├── oauth_endpoints.py     # OAuth 2.0 endpoints
+│   ├── webhooks.py            # Internal completion-webhook receiver
 │   └── tools/                 # Tool implementations
 │       ├── audio.py           # Audio transcription, TTS & music generation
 │       ├── image.py           # Image generation, OCR & processing
-│       ├── video.py           # Video generation, audio-to-video & video replace
+│       ├── video.py           # Video generation, image/audio-to-video, upscale & replace
 │       ├── embedding.py       # Text embeddings
+│       ├── prompt.py          # Prompt booster
 │       ├── utility.py         # Balance, models, status
-│       └── _price_helpers.py  # Price calculation helpers
+│       ├── _price_helpers.py  # Resolve parameters from the model card
+│       └── _responses.py      # Shared tool response shape
 ├── tests/                     # Test suite
 │   ├── __init__.py
 │   └── conftest.py           # Pytest fixtures
