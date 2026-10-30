@@ -2,7 +2,7 @@
 
 Production-ready Model Context Protocol (MCP) server for the [deAPI](https://deapi.ai) REST API. This server exposes all deAPI AI capabilities as MCP tools, enabling LLMs to perform audio transcription, image generation, OCR, video generation, text-to-speech, and more.
 
-> **deAPI v2** — this server targets the deAPI v2 client API (OpenAI-aligned noun paths under `/api/v2/*`). Set `DEAPI_API_VERSION=v1` if you need to point at the legacy v1 endpoints.
+> **deAPI v2** — this server targets the deAPI v2 client API (OpenAI-aligned noun paths under `/api/v2/*`). API v1 is not supported: the tools send v2 payloads only.
 
 ## Features
 
@@ -48,14 +48,12 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 - `text_to_video` - Generate videos from text prompts
 - `image_to_video` - Animate static images into videos
 - `audio_to_video` - Generate video conditioned on audio content
-- `video_replace` - Replace a person in a video with a character from a reference image
-- `video_remove_background` - Remove the background from a video
+- `video_description` - Describe a video in text (from an uploaded file or a video URL)
 - `video_upscale` - Upscale a video to higher resolution
 - `text_to_video_price` - Calculate text-to-video cost
 - `image_to_video_price` - Calculate image-to-video cost
 - `audio_to_video_price` - Calculate audio-to-video cost
-- `video_replace_price` - Calculate video character replacement cost
-- `video_remove_background_price` - Calculate video background-removal cost
+- `video_description_price` - Calculate video description cost
 - `video_upscale_price` - Calculate video upscaling cost
 
 ### Embedding Tools
@@ -69,14 +67,22 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 ### Utility Tools
 - `get_balance` - Check account balance
 - `get_available_models` - List available AI models with specifications
-- `check_job_status` - Query async job status by ID
+- `check_job_status` - Query async job status by ID; with `wait_seconds` it waits for the job and returns the finished result in the original tool's shape. A failed job reports `success: false` with `error_reason`, `error_code`, `retryable` and `refunded`
+
+### Webhooks
+
+Every generation tool accepts `webhook_url` (HTTPS) and an optional `webhook_secret` (32–255 chars). deAPI calls that URL when the job finishes, signed with `X-DeAPI-Signature: sha256=<HMAC-SHA256(secret, "<timestamp>.<body>")>`; the tool still returns the result to the caller as usual.
+
+### Model-driven defaults
+
+Generation parameters such as `width`, `height`, `steps`, `frames` and `fps` default to the selected model's own values when left unset — each model has different limits, so there is no fixed default that works everywhere. The `get_available_models` output and every tool description list each model's accepted ranges. Set `enhance_prompt: true` on `text_to_image`/`image_to_image` to let deAPI rewrite the prompt; the result then includes `prompt_boost` with the prompt actually used.
 
 ## Installation
 
 ### Prerequisites
 
 **For running the MCP server:**
-- Python 3.10 or higher
+- Python 3.11 or higher
 - `uv`, `pip`, or `conda` for package management
 
 **For a deAPI account:**
@@ -117,7 +123,8 @@ pip install -e .
 # Copy the example file
 cp .env.example .env
 
-# Edit with your preferences (optional - defaults work fine)
+# Edit with your preferences (optional - defaults work fine locally).
+# Set DEAPI_JWT_SECRET_KEY before exposing the server beyond localhost.
 # DEAPI_API_BASE_URL=https://api.deapi.ai
 # DEAPI_HTTP_TIMEOUT=30.0
 # DEAPI_MAX_RETRIES=3
@@ -131,15 +138,18 @@ The server can run in two modes:
 
 **Local Mode** (for use with Claude Desktop on the same machine):
 ```bash
-python -m src.server_remote
+MCP_HOST=127.0.0.1 python -m deapi_mcp.server_remote
 ```
 
-The server will start on `http://localhost:8000` by default.
+The server starts on `http://localhost:8000`. On loopback it may run without `DEAPI_JWT_SECRET_KEY`
+(it then signs OAuth tokens with a per-process key, so a restart logs clients out).
 
 **Remote Mode** (for deployment to a remote server):
 ```bash
-# Set host to accept external connections
-MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m src.server_remote
+# A fixed signing key is required whenever the server binds beyond loopback
+# (the default host is 0.0.0.0) or uses Redis; without it the server refuses to start.
+export DEAPI_JWT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m deapi_mcp.server_remote
 ```
 
 See the [Remote Deployment](#remote-deployment) section for production deployment options.
@@ -228,14 +238,17 @@ Use audio_transcription with:
 
 ### Key Components
 
-- **DeapiClient** (`src/deapi_client.py`): HTTP client with auth forwarding and retry logic
-- **PollingManager** (`src/polling_manager.py`): Smart adaptive polling for async jobs
-- **Schemas** (`src/schemas.py`): Pydantic models for type safety
-- **Tools** (`src/tools/`): Organized tool implementations
+- **DeapiClient** (`deapi_mcp/deapi_client.py`): HTTP client with auth forwarding, built on the [deAPI Python SDK](https://github.com/deapi-ai/deapi-python-sdk) transport
+- **PollingManager** (`deapi_mcp/polling_manager.py`): Smart adaptive polling for async jobs
+- **Schemas** (`deapi_mcp/schemas.py`): Pydantic models for type safety
+- **Auth code store** (`deapi_mcp/auth_code_store.py`): single-use OAuth authorization codes, in Redis when `DEAPI_REDIS_HOST` is set (so any replica can finish a login), otherwise in process memory
+- **Webhooks** (`deapi_mcp/webhooks.py`): optional HMAC-verified receiver for deAPI completion callbacks, so waiting tools wake on the callback instead of polling (`DEAPI_WEBHOOKS_INTERNAL`)
+- **Tools** (`deapi_mcp/tools/`): Organized tool implementations
   - `audio.py` - Audio transcription, TTS & music generation tools
   - `image.py` - Image generation, transformation, OCR, background removal & upscaling
-  - `video.py` - Video generation, audio-to-video & video replace tools
+  - `video.py` - Video generation, image/audio-to-video, description & upscale tools
   - `embedding.py` - Text embedding tools
+  - `prompt.py` - Prompt booster tools
   - `utility.py` - Balance, models, status tools
 
 ### Smart Adaptive Polling
@@ -252,9 +265,9 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x).
 
 ### Error Handling
 
-- **HTTP Errors**: Automatic retry (3 attempts) with exponential backoff
-- **Timeouts**: Graceful handling with clear error messages
-- **Job Failures**: Detected and reported to the client
+- **HTTP Errors**: Reads are retried (3 attempts) with exponential backoff; a job submission is retried only when it provably was not processed (rate limited, or the connection never opened), so a job is never submitted twice
+- **Long jobs**: one tool call waits at most `DEAPI_TOOL_MAX_WAIT` (45 s, below the 60 s call timeout many MCP clients use). A job still running then returns `success: true, done: false` with its `job_id`, and `check_job_status(job_id, wait_seconds=...)` resumes the wait
+- **Job Failures**: Reported with the API's reason, error code, and whether the job is retryable / was refunded
 - **API Errors**: Properly formatted error responses
 
 ## Configuration
@@ -269,13 +282,37 @@ DEAPI_API_VERSION=v2
 # HTTP Client
 DEAPI_HTTP_TIMEOUT=30.0
 DEAPI_MAX_RETRIES=3
-DEAPI_RETRY_BACKOFF_FACTOR=2.0
+
+# Seconds one tool call waits before returning done=false and the job_id
+DEAPI_TOOL_MAX_WAIT=45.0
 
 # Polling Configuration (override defaults)
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
 DEAPI_POLLING_AUDIO__MAX_DELAY=5.0
 DEAPI_POLLING_AUDIO__TIMEOUT=300.0
+
+# Internal completion webhooks (off by default). The receiver URL must be
+# reachable from api.deapi.ai; a half-configured set refuses to start.
+DEAPI_WEBHOOKS_INTERNAL=false
+DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
+DEAPI_WEBHOOK_SECRET=<32-255 chars>
+DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
+
+# Shared store for OAuth authorization codes (optional). Unset host = in-memory
+# store, which only works with a single replica.
+DEAPI_REDIS_HOST=redis.example.com
+DEAPI_REDIS_PORT=6379
+DEAPI_REDIS_PASSWORD=
+DEAPI_REDIS_DB=11
+DEAPI_REDIS_SCHEME=plain          # plain | tls (tls needs DEAPI_REDIS_CA_FILE)
+DEAPI_REDIS_REQUIRED=false        # true = refuse to start without a Redis host
+
+# Seconds in-flight tool calls may run after SIGTERM before they are cancelled.
+# Keep it below your platform's termination grace period.
+MCP_GRACEFUL_SHUTDOWN_SECONDS=930
 ```
+
+With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally.
 
 ## Development
 
@@ -283,7 +320,7 @@ DEAPI_POLLING_AUDIO__TIMEOUT=300.0
 
 ```
 mcp-server-deapi/
-├── src/
+├── deapi_mcp/
 │   ├── server_remote.py       # Streamable-HTTP MCP server
 │   ├── deapi_client.py        # HTTP client with auth forwarding
 │   ├── polling_manager.py     # Smart adaptive polling logic
@@ -292,13 +329,18 @@ mcp-server-deapi/
 │   ├── auth.py                # Authentication middleware
 │   ├── fastmcp_auth.py        # FastMCP OAuth provider
 │   ├── oauth_endpoints.py     # OAuth 2.0 endpoints
+│   ├── auth_code_store.py     # OAuth authorization codes (Redis or in-memory)
+│   ├── observability.py       # Per-call outcome, injectable metrics sinks
+│   ├── webhooks.py            # Internal completion-webhook receiver
 │   └── tools/                 # Tool implementations
 │       ├── audio.py           # Audio transcription, TTS & music generation
 │       ├── image.py           # Image generation, OCR & processing
-│       ├── video.py           # Video generation, audio-to-video & video replace
+│       ├── video.py           # Video generation, image/audio-to-video, description & upscale
 │       ├── embedding.py       # Text embeddings
+│       ├── prompt.py          # Prompt booster
 │       ├── utility.py         # Balance, models, status
-│       └── _price_helpers.py  # Price calculation helpers
+│       ├── _price_helpers.py  # Resolve parameters from the model card
+│       └── _responses.py      # Shared tool response shape
 ├── tests/                     # Test suite
 │   ├── __init__.py
 │   └── conftest.py           # Pytest fixtures
@@ -333,13 +375,41 @@ python tests/smoke_test.py
 
 Format code with Black:
 ```bash
-black src/
+black deapi_mcp/ tests/
 ```
 
 Lint with Ruff:
 ```bash
-ruff check src/
+ruff check deapi_mcp/ tests/
 ```
+
+Type-check with mypy (strict):
+```bash
+mypy deapi_mcp
+```
+
+CI runs all three plus the test suite on Python 3.11–3.14.
+
+### Building your own server on the core
+
+`deapi_mcp` is importable, so a deployment can assemble its own server from the same tools
+and add what it needs (for example its own metrics) without forking:
+
+```python
+from fastmcp import FastMCP
+from deapi_mcp.server_remote import create_app, register_core_tools
+
+server = FastMCP("my-deapi")
+register_core_tools(server)            # every deAPI tool
+app = create_app(server, metrics=None) # Starlette app: /mcp, /health, OAuth routes
+```
+
+As with the stock server, set `DEAPI_JWT_SECRET_KEY` first: without it the app refuses to start
+on a non-local host.
+
+`metrics` is an optional overlay that instruments tool calls and OAuth and mounts its own
+routes; the stock server (`build_app()`) passes none. Recorders for per-call outcomes and
+rejected logins plug in through `deapi_mcp.observability`.
 
 ## API Token Security
 
@@ -361,12 +431,12 @@ For production environments or when you want to host the MCP server on a remote 
 1. **Build and run with Docker:**
 ```bash
 docker build -t mcp-server-deapi .
-docker run -d -p 8000:8000 --name mcp-server-deapi mcp-server-deapi
+docker run -d -p 8000:8000 --name mcp-server-deapi   -e DEAPI_JWT_SECRET_KEY="<a long random secret>"   --stop-timeout 960   mcp-server-deapi
 ```
 
-2. **Or use Docker Compose:**
+2. **Or use Docker Compose** (reads `DEAPI_JWT_SECRET_KEY` from the environment or `.env`):
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 3. **Configure Claude Desktop to connect:**
@@ -387,7 +457,8 @@ docker-compose up -d
 git clone https://github.com/deapi-ai/mcp-server-deapi.git
 cd mcp-server-deapi
 pip install -e .
-python -m src.server_remote
+export DEAPI_JWT_SECRET_KEY="<a long random secret>"
+python -m deapi_mcp.server_remote
 ```
 
 2. **For production with systemd:**
@@ -455,7 +526,7 @@ If you get model errors:
 ### Remote Connection Issues
 
 If remote MCP connection fails:
-1. Test the endpoint: `curl -N http://your-server:8000/mcp`
+1. Test the server: `curl http://your-server:8000/health` (a bare `GET /mcp` answers 405: the transport is stateless, POST only)
 2. Check server logs: `docker logs mcp-server-deapi` or `journalctl -u mcp-server-deapi`
 3. Verify firewall rules and SSL certificates (if using HTTPS)
 4. Ensure MCP endpoint is accessible from your client
