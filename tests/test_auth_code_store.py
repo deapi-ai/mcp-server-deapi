@@ -1,6 +1,8 @@
 """Tests for the OAuth authorization code store (in-memory and Redis backends)."""
 
 import asyncio
+import hashlib
+import json
 import socket
 import sys
 import time
@@ -21,6 +23,7 @@ from deapi_mcp.auth_code_store import (
 )
 
 PREFIX = "deapi_mcp_database_"
+INDEX = f"{PREFIX}oauth_codes_live"
 REAL_NOW = 1_800_000_000.0
 DATA = {
     "client_id": "client-1",
@@ -29,6 +32,16 @@ DATA = {
     "state": "state-1",
     "expires_at": REAL_NOW + 600,
 }
+
+
+def code_key(code):
+    return f"{PREFIX}oauth_code:{hashlib.sha256(code.encode()).hexdigest()}"
+
+
+async def live_codes(store):
+    if isinstance(store, InMemoryAuthCodeStore):
+        return len(store._codes)
+    return await store._client.zcard(INDEX)
 
 
 @pytest.fixture(autouse=True)
@@ -77,7 +90,9 @@ async def test_consume_is_single_use(store):
 
 
 async def test_consume_unknown_code_returns_none(store):
+    await store.put("c1", DATA, 600)
     assert await store.consume("nope") is None
+    assert await store.consume("c1") == DATA  # an unknown code disturbs nothing
 
 
 async def test_concurrent_consume_only_one_wins(store):
@@ -114,6 +129,8 @@ async def test_cap_frees_after_consume(store):
         await store.put(f"c{i}", DATA, 600)
     await store.consume("c0")
     assert await store.put("c9", DATA, 600) is True
+    assert await store.consume("c1") == DATA  # the consumed slot was reused, nothing evicted
+    assert await store.consume("c2") == DATA
 
 
 async def test_cap_frees_after_expiry(store, monkeypatch):
@@ -121,6 +138,7 @@ async def test_cap_frees_after_expiry(store, monkeypatch):
         await store.put(f"c{i}", DATA, 600)
     monkeypatch.setattr("deapi_mcp.auth_code_store.time.time", lambda: REAL_NOW + 601)
     assert await store.put("c9", DATA, 600) is True
+    assert await live_codes(store) == 1  # all three expired codes were pruned, not one evicted
 
 
 async def test_expired_code_is_not_consumable_in_memory(monkeypatch):
@@ -156,8 +174,71 @@ async def test_keys_hashed_prefixed_and_expiring(redis_store, raw_client):
     keys = await raw_client.keys("*")
     assert keys and all(k.startswith(PREFIX) for k in keys)
     assert not any("secret-code" in k for k in keys)
+    assert json.loads(await raw_client.get(code_key("secret-code"))) == DATA
     for k in keys:
         assert await raw_client.ttl(k) > 0
+
+
+async def test_index_scores_come_from_the_redis_clock(redis_store, raw_client, monkeypatch):
+    skewed = SimpleNamespace(time=lambda: REAL_NOW - 3600)  # app host an hour behind Redis
+    monkeypatch.setattr("deapi_mcp.auth_code_store.time", skewed)
+    await redis_store.put("c1", DATA, 600)
+    digest = hashlib.sha256(b"c1").hexdigest()
+    assert await raw_client.zscore(INDEX, digest) == pytest.approx(REAL_NOW + 600)
+
+
+async def test_cap_holds_when_one_app_clock_runs_ahead(srv, raw_client, monkeypatch):
+    a = RedisAuthCodeStore(fakeredis.FakeAsyncRedis(server=srv, decode_responses=True), PREFIX, 3)
+    b = RedisAuthCodeStore(fakeredis.FakeAsyncRedis(server=srv, decode_responses=True), PREFIX, 3)
+    for i in range(3):
+        await b.put(f"b{i}", DATA, 600)
+    ahead = SimpleNamespace(time=lambda: REAL_NOW + 3600)
+    monkeypatch.setattr("deapi_mcp.auth_code_store.time", ahead)
+    await a.put("a1", DATA, 600)
+    # An app-side clock would prune b's live codes from the index and let the keys outgrow the cap
+    assert len(await raw_client.keys(f"{PREFIX}oauth_code:*")) == 3
+    assert await raw_client.zcard(INDEX) == 3
+
+
+async def test_short_ttl_put_never_shortens_index_ttl(redis_store, raw_client):
+    await redis_store.put("long", DATA, 600)
+    await redis_store.put("short", DATA, 60)
+    assert await raw_client.ttl(INDEX) == 600
+    assert await raw_client.ttl(code_key("short")) == 60
+
+
+async def test_put_restores_a_missing_index_ttl(redis_store, raw_client):
+    await redis_store.put("c1", DATA, 600)
+    await raw_client.persist(INDEX)
+    await redis_store.put("c2", DATA, 600)
+    assert await raw_client.ttl(INDEX) == 600
+
+
+async def test_code_written_by_previous_version_stays_redeemable(redis_store, raw_client):
+    # The previous release scored the index with the app clock; the key format is unchanged
+    digest = hashlib.sha256(b"legacy").hexdigest()
+    await raw_client.set(code_key("legacy"), json.dumps(DATA), ex=600)
+    await raw_client.zadd(INDEX, {digest: REAL_NOW + 600})
+    await raw_client.expire(INDEX, 600)
+    assert await redis_store.put("new", DATA, 600) is True
+    assert await raw_client.zcard(INDEX) == 2
+    assert await redis_store.consume("legacy") == DATA
+    assert await raw_client.zcard(INDEX) == 1
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["not json", '"a string"', "[1, 2]", b"\xff\xfe"],
+    ids=["invalid-json", "json-string", "json-list", "invalid-utf8"],
+)
+async def test_corrupt_value_is_treated_as_unknown(redis_store, srv, caplog, raw):
+    bytes_client = fakeredis.FakeAsyncRedis(server=srv)
+    await bytes_client.set(code_key("c1"), raw, ex=600)
+    assert await redis_store.consume("c1") is None
+    assert await bytes_client.exists(code_key("c1")) == 0  # burnt like any redeemed code
+    assert "unreadable authorization code" in caplog.text
+    assert "c1" not in caplog.text
+    assert "not json" not in caplog.text and "a string" not in caplog.text
 
 
 async def test_redis_down_raises_unavailable(srv):
