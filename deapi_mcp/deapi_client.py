@@ -216,9 +216,7 @@ class DeapiClient:
                     url,
                     json=json_data,
                     data=data,
-                    # The SDK annotates uploads as a list of bytes tuples but hands
-                    # them to httpx unchanged, which accepts every UploadFiles shape.
-                    files=files,  # type: ignore[arg-type]
+                    files=files,
                     params=params,
                 ),
             )
