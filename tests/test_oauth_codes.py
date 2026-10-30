@@ -15,7 +15,11 @@ from deapi_mcp.auth_code_store import (
     RedisAuthCodeStore,
     reset_auth_code_store,
 )
-from deapi_mcp.oauth_endpoints import authorize_endpoint, token_endpoint
+from deapi_mcp.oauth_endpoints import (
+    CODE_STORE_RETRY_AFTER_SECONDS,
+    authorize_endpoint,
+    token_endpoint,
+)
 
 PREFIX = "deapi_mcp_database_"
 REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
@@ -37,6 +41,10 @@ def make_store(srv):
     return RedisAuthCodeStore(
         fakeredis.FakeAsyncRedis(server=srv, decode_responses=True), PREFIX, 1000
     )
+
+
+def code_key(code):
+    return f"{PREFIX}oauth_code:{hashlib.sha256(code.encode()).hexdigest()}"
 
 
 def make_client():
@@ -109,13 +117,32 @@ def test_wrong_verifier_is_rejected(client):
 
 
 def test_login_across_two_store_instances(srv):
+    raw = fakeredis.FakeRedis(server=srv, decode_responses=True)
     reset_auth_code_store(make_store(srv))
     try:
         with make_client() as client_a:
             code = authorize(client_a)
+        # The code lives in Redis under its hash, not in the issuing process
+        assert raw.exists(code_key(code)) == 1
         reset_auth_code_store(make_store(srv))
         with make_client() as client_b:
             assert exchange(client_b, code).status_code == 200
+        assert raw.exists(code_key(code)) == 0
+    finally:
+        reset_auth_code_store()
+
+
+def test_login_fails_when_the_shared_store_lost_the_code(srv):
+    """Negative control: the redeeming instance only knows what Redis holds."""
+    raw = fakeredis.FakeRedis(server=srv, decode_responses=True)
+    reset_auth_code_store(make_store(srv))
+    try:
+        with make_client() as client_a:
+            code = authorize(client_a)
+        raw.delete(code_key(code))
+        reset_auth_code_store(make_store(srv))
+        with make_client() as client_b:
+            assert exchange(client_b, code).json()["error"] == "invalid_grant"
     finally:
         reset_auth_code_store()
 
@@ -167,6 +194,8 @@ def test_token_store_down_returns_503(client, srv, caplog):
     r = exchange(client, code)
     assert r.status_code == 503
     assert r.json()["error"] == "temporarily_unavailable"
+    assert r.headers["retry-after"] == str(CODE_STORE_RETRY_AFTER_SECONDS)
+    assert 0 < CODE_STORE_RETRY_AFTER_SECONDS <= 60
     assert "ConnectionError" in caplog.text
     assert code[:6] not in caplog.text
 
@@ -176,8 +205,20 @@ def test_logs_carry_no_code_fragment(client, caplog):
     exchange(client, "abcdefghijklmnop")
     real = authorize(client)
     exchange(client, real, redirect_uri="https://evil.example/cb")
+    assert "Invalid authorization code" in caplog.text  # the failures were logged at all
     assert "abcdefghij" not in caplog.text
     assert real[:6] not in caplog.text
+
+
+def test_corrupt_stored_code_is_invalid_grant(client, srv, caplog):
+    code = authorize(client)
+    fakeredis.FakeRedis(server=srv).set(code_key(code), b"{truncated", ex=600)
+    r = exchange(client, code)
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_grant"
+    assert "unreadable authorization code" in caplog.text
+    assert code[:6] not in caplog.text
+    assert "truncated" not in caplog.text
 
 
 def test_health_and_mcp_work_when_redis_down(app_client, auth_headers, srv):

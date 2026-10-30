@@ -24,16 +24,28 @@ from .config import Settings, settings
 
 logger = logging.getLogger(__name__)
 
+# KEYS: code key, index key. ARGV: value, ttl seconds, cap, digest, code key prefix.
+# The index scores each digest with its expiry time, read from the Redis clock (TIME), so
+# pruning lines up with the keys' own TTLs whatever the application host's clock says.
+# The index TTL is only ever extended, so a short-lived code never shortens it below a
+# longer-lived one. This compares PTTL instead of using EXPIRE GT, which needs Redis 7 (GETDEL
+# needs only 6.2) and never sets a TTL on a key that has none; here a missing TTL is restored.
 _PUT_SCRIPT = """
-if tonumber(ARGV[4]) <= 0 then return 0 end
-redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[3])
-while redis.call('ZCARD', KEYS[2]) >= tonumber(ARGV[4]) do
+local ttl = tonumber(ARGV[2])
+local cap = tonumber(ARGV[3])
+if cap <= 0 then return 0 end
+local t = redis.call('TIME')
+local now = tonumber(t[1]) + tonumber(t[2]) / 1000000
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+while redis.call('ZCARD', KEYS[2]) >= cap do
   local oldest = redis.call('ZPOPMIN', KEYS[2])
-  redis.call('DEL', ARGV[6] .. oldest[1])
+  redis.call('DEL', ARGV[5] .. oldest[1])
 end
-redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-redis.call('ZADD', KEYS[2], tonumber(ARGV[3]) + tonumber(ARGV[2]), ARGV[5])
-redis.call('EXPIRE', KEYS[2], ARGV[2])
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ttl)
+redis.call('ZADD', KEYS[2], now + ttl, ARGV[4])
+if redis.call('PTTL', KEYS[2]) < ttl * 1000 then
+  redis.call('EXPIRE', KEYS[2], ttl)
+end
 return 1
 """
 
@@ -109,7 +121,6 @@ class RedisAuthCodeStore:
                 args=[
                     json.dumps(data),
                     ttl_seconds,
-                    time.time(),
                     self._max_entries,
                     digest,
                     self._code_key(""),
@@ -126,11 +137,26 @@ class RedisAuthCodeStore:
                 pipe.getdel(self._code_key(digest))
                 pipe.zrem(self._index_key, digest)
                 raw, _ = await pipe.execute()
+        except UnicodeDecodeError:
+            # The transaction ran, so the code is already burnt; only its value is unreadable
+            return self._corrupt()
         except RedisError as exc:
             raise AuthCodeStoreUnavailable("Redis auth code store unavailable") from exc
         if raw is None:
             return None
-        return cast(dict[str, Any], json.loads(raw))
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return self._corrupt()
+        if not isinstance(data, dict):
+            return self._corrupt()
+        return cast(dict[str, Any], data)
+
+    @staticmethod
+    def _corrupt() -> None:
+        # Neither the code nor the stored value is logged: both are credentials
+        logger.warning("Discarded an unreadable authorization code entry; treating it as unknown")
+        return None
 
 
 def build_redis_client(
