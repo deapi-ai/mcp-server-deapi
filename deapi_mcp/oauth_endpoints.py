@@ -18,21 +18,24 @@ Flow (Authorization Code):
 8. Auth middleware extracts Deapi token from JWT and forwards to Deapi API
 """
 
-import hashlib
 import base64
+import hashlib
 import logging
 import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlencode, urlparse
 
 import jwt
 from cryptography.fernet import Fernet
+from starlette.datastructures import FormData
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
+from . import auth_code_store
+from .auth_code_store import AUTHORIZATION_CODE_MAX_ENTRIES, AuthCodeStoreUnavailable
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -43,7 +46,6 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_SECONDS = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRATION_SECONDS = 2592000  # 30 days
 AUTHORIZATION_CODE_EXPIRATION_SECONDS = 600  # 10 minutes
-AUTHORIZATION_CODE_MAX_ENTRIES = 1000  # Max auth codes before forced cleanup
 
 # Allowed redirect URI schemes (prevent javascript:, data:, etc.)
 ALLOWED_REDIRECT_SCHEMES = {"http", "https"}
@@ -54,10 +56,6 @@ _jwt_secret_key: Optional[str] = None
 
 # Fernet encryption key derived from JWT secret (for encrypting tokens in JWT claims)
 _fernet: Optional[Fernet] = None
-
-# In-memory storage for authorization codes
-# Format: {code: {"client_id": str, "redirect_uri": str, "code_challenge": str, "expires_at": float, "state": str}}
-_authorization_codes: dict[str, dict] = {}
 
 
 def get_jwt_secret_key() -> str:
@@ -131,16 +129,6 @@ def decrypt_token(encrypted_token: str) -> str:
     return _get_fernet().decrypt(encrypted_token.encode()).decode()
 
 
-def _prune_expired_authorization_codes() -> None:
-    """Remove expired authorization codes to prevent memory leaks."""
-    now = time.time()
-    expired = [code for code, data in _authorization_codes.items() if now > data["expires_at"]]
-    for code in expired:
-        del _authorization_codes[code]
-    if expired:
-        logger.debug("Pruned %d expired authorization codes", len(expired))
-
-
 def _validate_redirect_uri(redirect_uri: str) -> bool:
     """Validate that a redirect URI uses an allowed scheme.
 
@@ -190,7 +178,7 @@ def create_jwt(deapi_token: str, client_id: str = DEFAULT_CLIENT_ID) -> str:
     return token
 
 
-def decode_jwt(token: str) -> Optional[dict]:
+def decode_jwt(token: str) -> Optional[dict[str, Any]]:
     """Decode and validate JWT token.
 
     Args:
@@ -259,7 +247,7 @@ def create_refresh_token(deapi_token: str, client_id: str = DEFAULT_CLIENT_ID) -
     return token
 
 
-def decode_refresh_token(token: str) -> Optional[dict]:
+def decode_refresh_token(token: str) -> Optional[dict[str, Any]]:
     """Decode and validate a refresh token.
 
     Args:
@@ -350,6 +338,16 @@ async def oauth_protected_resource_metadata(request: Request) -> JSONResponse:
     return JSONResponse(metadata)
 
 
+def _form_str(form: FormData, key: str) -> Optional[str]:
+    """A text form field, or None when it is missing or was sent as a file part.
+
+    A file part arrives as an UploadFile; treating it as absent turns it into the usual
+    400/401 instead of a crash further down.
+    """
+    value = form.get(key)
+    return value if isinstance(value, str) else None
+
+
 async def token_endpoint(request: Request) -> JSONResponse:
     """OAuth 2.0 Token endpoint for Authorization Code, Client Credentials, and Refresh Token grants.
 
@@ -381,9 +379,9 @@ async def token_endpoint(request: Request) -> JSONResponse:
     """
     # Parse form data
     form_data = await request.form()
-    grant_type = form_data.get("grant_type")
-    client_id = form_data.get("client_id")
-    client_secret = form_data.get("client_secret")
+    grant_type = _form_str(form_data, "grant_type")
+    client_id = _form_str(form_data, "client_id")
+    client_secret = _form_str(form_data, "client_secret")
 
     # Validate grant_type
     if grant_type not in ["authorization_code", "client_credentials", "refresh_token"]:
@@ -407,7 +405,7 @@ async def token_endpoint(request: Request) -> JSONResponse:
 
     # Handle refresh_token grant
     if grant_type == "refresh_token":
-        refresh_token = form_data.get("refresh_token")
+        refresh_token = _form_str(form_data, "refresh_token")
 
         if not refresh_token:
             return JSONResponse(
@@ -450,7 +448,10 @@ async def token_endpoint(request: Request) -> JSONResponse:
         except Exception as e:
             logger.error(f"Failed to create tokens: {str(e)}")
             return JSONResponse(
-                {"error": "server_error", "error_description": f"Failed to create tokens: {str(e)}"},
+                {
+                    "error": "server_error",
+                    "error_description": f"Failed to create tokens: {str(e)}",
+                },
                 status_code=500,
             )
 
@@ -465,9 +466,9 @@ async def token_endpoint(request: Request) -> JSONResponse:
 
     # Handle authorization_code grant
     if grant_type == "authorization_code":
-        code = form_data.get("code")
-        code_verifier = form_data.get("code_verifier")
-        redirect_uri = form_data.get("redirect_uri")
+        code = _form_str(form_data, "code")
+        code_verifier = _form_str(form_data, "code_verifier")
+        redirect_uri = _form_str(form_data, "redirect_uri")
 
         # Validate required parameters
         if not code:
@@ -476,10 +477,25 @@ async def token_endpoint(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        # Look up authorization code
-        auth_data = _authorization_codes.get(code)
+        # Fetch and burn the code in one step: a code is single-use even if a later check fails
+        try:
+            auth_data = await auth_code_store.get_auth_code_store().consume(code)
+        except AuthCodeStoreUnavailable as exc:
+            cause = exc.__cause__ or exc
+            logger.error(
+                "Authorization code store unavailable during token exchange: %s: %s",
+                type(cause).__name__,
+                cause,
+            )
+            return JSONResponse(
+                {
+                    "error": "temporarily_unavailable",
+                    "error_description": "Authorization temporarily unavailable, try again",
+                },
+                status_code=503,
+            )
         if not auth_data:
-            logger.error(f"Invalid authorization code: {code[:10]}...")
+            logger.error("Invalid authorization code")
             return JSONResponse(
                 {"error": "invalid_grant", "error_description": "Invalid authorization code"},
                 status_code=400,
@@ -488,7 +504,6 @@ async def token_endpoint(request: Request) -> JSONResponse:
         # Check expiration
         if time.time() > auth_data["expires_at"]:
             logger.error("Authorization code expired")
-            del _authorization_codes[code]
             return JSONResponse(
                 {"error": "invalid_grant", "error_description": "Authorization code expired"},
                 status_code=400,
@@ -517,13 +532,13 @@ async def token_endpoint(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        # Delete authorization code (one-time use)
-        del _authorization_codes[code]
-
         # Client secret IS the Deapi token
         if not client_secret or len(client_secret) < 10:
             return JSONResponse(
-                {"error": "invalid_client", "error_description": "Invalid client_secret (Deapi token)"},
+                {
+                    "error": "invalid_client",
+                    "error_description": "Invalid client_secret (Deapi token)",
+                },
                 status_code=401,
             )
 
@@ -594,7 +609,7 @@ def verify_pkce_challenge(code_verifier: str, code_challenge: str) -> bool:
     return computed_challenge == code_challenge
 
 
-async def authorize_endpoint(request: Request) -> RedirectResponse:
+async def authorize_endpoint(request: Request) -> Response:
     """OAuth 2.0 Authorization endpoint.
 
     Mounted at: /authorize
@@ -624,30 +639,38 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
     # Validate client_id
     if not client_id or client_id != DEFAULT_CLIENT_ID:
         logger.error(f"Invalid client_id: {client_id}")
-        # Redirect with error if we have redirect_uri
-        if redirect_uri:
-            error_params = {"error": "unauthorized_client", "error_description": "Invalid client_id"}
-            if state:
-                error_params["state"] = state
-            return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
-        return JSONResponse({"error": "unauthorized_client"}, status_code=401)
+        # RFC 6749 4.1.2.1: never redirect to a redirect_uri that is not tied to a valid
+        # client (open redirect), so answer directly.
+        return JSONResponse(
+            {"error": "unauthorized_client", "error_description": "Invalid client_id"},
+            status_code=400,
+        )
 
     # Validate redirect_uri
     if not redirect_uri:
         logger.error("Missing redirect_uri")
-        return JSONResponse({"error": "invalid_request", "error_description": "redirect_uri is required"}, status_code=400)
+        return JSONResponse(
+            {"error": "invalid_request", "error_description": "redirect_uri is required"},
+            status_code=400,
+        )
 
     if not _validate_redirect_uri(redirect_uri):
         logger.error("Invalid redirect_uri scheme: %s", redirect_uri)
         return JSONResponse(
-            {"error": "invalid_request", "error_description": "redirect_uri must use http or https scheme"},
+            {
+                "error": "invalid_request",
+                "error_description": "redirect_uri must use http or https scheme",
+            },
             status_code=400,
         )
 
     # Validate response_type
     if response_type != "code":
         logger.error(f"Invalid response_type: {response_type}")
-        error_params = {"error": "unsupported_response_type", "error_description": "Only 'code' response_type is supported"}
+        error_params = {
+            "error": "unsupported_response_type",
+            "error_description": "Only 'code' response_type is supported",
+        }
         if state:
             error_params["state"] = state
         return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
@@ -655,18 +678,10 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
     # Validate PKCE challenge
     if not code_challenge or code_challenge_method != "S256":
         logger.error(f"Invalid PKCE: challenge={code_challenge}, method={code_challenge_method}")
-        error_params = {"error": "invalid_request", "error_description": "PKCE with S256 is required"}
-        if state:
-            error_params["state"] = state
-        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
-
-    # Prune expired authorization codes to prevent memory leaks
-    _prune_expired_authorization_codes()
-
-    # Enforce max entries to prevent DoS via excessive authorize requests
-    if len(_authorization_codes) >= AUTHORIZATION_CODE_MAX_ENTRIES:
-        logger.warning("Authorization code store at capacity (%d), rejecting new request", AUTHORIZATION_CODE_MAX_ENTRIES)
-        error_params = {"error": "server_error", "error_description": "Server is busy, please try again later"}
+        error_params = {
+            "error": "invalid_request",
+            "error_description": "PKCE with S256 is required",
+        }
         if state:
             error_params["state"] = state
         return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
@@ -675,14 +690,46 @@ async def authorize_endpoint(request: Request) -> RedirectResponse:
     auth_code = secrets.token_urlsafe(32)
     expires_at = time.time() + AUTHORIZATION_CODE_EXPIRATION_SECONDS
 
-    # Store authorization code
-    _authorization_codes[auth_code] = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "code_challenge": code_challenge,
-        "expires_at": expires_at,
-        "state": state,
-    }
+    try:
+        stored = await auth_code_store.get_auth_code_store().put(
+            auth_code,
+            {
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "code_challenge": code_challenge,
+                "expires_at": expires_at,
+                "state": state,
+            },
+            AUTHORIZATION_CODE_EXPIRATION_SECONDS,
+        )
+    except AuthCodeStoreUnavailable as exc:
+        cause = exc.__cause__ or exc
+        logger.error(
+            "Authorization code store unavailable, rejecting authorize request: %s: %s",
+            type(cause).__name__,
+            cause,
+        )
+        error_params = {
+            "error": "temporarily_unavailable",
+            "error_description": "Authorization temporarily unavailable, try again",
+        }
+        if state:
+            error_params["state"] = state
+        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
+
+    if not stored:
+        # Capacity protects against DoS via excessive authorize requests
+        logger.warning(
+            "Authorization code store at capacity (%d), rejecting new request",
+            AUTHORIZATION_CODE_MAX_ENTRIES,
+        )
+        error_params = {
+            "error": "server_error",
+            "error_description": "Server is busy, please try again later",
+        }
+        if state:
+            error_params["state"] = state
+        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
 
     # Build redirect URL with authorization code
     redirect_params = {"code": auth_code}

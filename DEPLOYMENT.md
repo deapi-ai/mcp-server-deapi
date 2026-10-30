@@ -4,7 +4,7 @@ This guide explains how to deploy the deAPI MCP Server on a remote host and conn
 
 ## Overview
 
-The deAPI MCP Server (`src/server_remote.py`) uses HTTP/SSE transport and can run in two deployment scenarios:
+The deAPI MCP Server (`deapi_mcp/server_remote.py`) uses HTTP/SSE transport and can run in two deployment scenarios:
 
 1. **Local Deployment** - Server runs on your local machine (localhost:8000)
 2. **Remote Deployment** - Server deployed to a remote host accessible over the network
@@ -34,7 +34,7 @@ export MCP_PORT=8000     # Port to listen on
 
 3. Run the remote server:
 ```bash
-python -m src.server_remote
+python -m deapi_mcp.server_remote
 ```
 
 The server will be available at `http://your-server-ip:8000/mcp`
@@ -53,7 +53,7 @@ User=your-user
 WorkingDirectory=/path/to/mcp-server-deapi
 Environment="MCP_HOST=0.0.0.0"
 Environment="MCP_PORT=8000"
-ExecStart=/usr/bin/python3 -m src.server_remote
+ExecStart=/usr/bin/python3 -m deapi_mcp.server_remote
 Restart=always
 
 [Install]
@@ -299,7 +299,7 @@ journalctl -u mcp-server-deapi -f
 docker logs -f mcp-server-deapi
 
 # Or redirect to file
-python -m src.server_remote 2>&1 | tee /var/log/mcp-server-deapi.log
+python -m deapi_mcp.server_remote 2>&1 | tee /var/log/mcp-server-deapi.log
 ```
 
 ## Troubleshooting

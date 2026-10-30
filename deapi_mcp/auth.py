@@ -8,9 +8,8 @@ authentication and retrieved by tools when calling the deAPI.
 from contextvars import ContextVar
 from typing import Optional
 
-
 # Context variable to store the current request's deAPI token
-current_deapi_token: ContextVar[Optional[str]] = ContextVar('deapi_token', default=None)
+current_deapi_token: ContextVar[Optional[str]] = ContextVar("deapi_token", default=None)
 
 
 def get_current_token() -> str:

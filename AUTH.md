@@ -195,7 +195,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 Start the server with OAuth enabled (automatically enabled):
 
 ```bash
-python -m src.server_remote
+python -m deapi_mcp.server_remote
 ```
 
 Environment variables:
@@ -253,7 +253,7 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 
 - Only `client_id=deapi-mcp` is accepted
 - This prevents unauthorized OAuth clients
-- Can be customized in `src/oauth_endpoints.py`
+- Can be customized in `deapi_mcp/oauth_endpoints.py`
 
 ## Troubleshooting
 
