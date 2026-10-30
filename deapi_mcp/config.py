@@ -72,13 +72,13 @@ class Settings(BaseSettings):
     # How long one tool call waits for its job before handing back the job_id.
     #
     # A job can run for an hour (a long video description, a long VOD transcript),
-    # but a tool call cannot stay open that long: Cloudflare in front of prod ends
-    # a response it has waited ~100s for with a 524, and MCP clients have their own
-    # call timeouts: 60s is common (the MCP SDK default, and the bridge a cloud chat
-    # uses to reach a connector on the user's desktop). Past that the client drops the
-    # call and never sees the job_id, so the job runs, is charged, and a retry pays
-    # twice. 45s leaves room for the upload before the wait starts. So a call waits
-    # at most this long, then returns
+    # but a tool call cannot stay open that long: a proxy or CDN in front of the
+    # server may end a response it has waited ~100s for (a 524 on some CDNs), and
+    # MCP clients have their own call timeouts: 60s is common (the MCP SDK default,
+    # and the bridge a cloud chat uses to reach a connector on the user's desktop).
+    # Past that the client drops the call and never sees the job_id, so the job
+    # runs, is charged, and a retry pays twice. 45s leaves room for the upload
+    # before the wait starts. So a call waits at most this long, then returns
     # status "processing" with the job_id, and check_job_status(job_id,
     # wait_seconds=...) picks the wait up again. The per-type `timeout` above
     # still caps a single wait if it is lower.
@@ -218,15 +218,16 @@ class Settings(BaseSettings):
         per-process store, and every code issued by one replica would be
         unknown to the next — OAuth logins fail intermittently with nothing
         logged. TLS without a CA bundle would either fail on the first
-        connection under load or tempt someone to disable verification; the
-        instance uses a self-signed certificate, so the bundle is mandatory.
+        connection under load or tempt someone to disable verification. The
+        bundle is mandatory so the server certificate is always verified, a
+        private or self-signed one included.
         """
         if self.redis_required and not self.redis_host:
             raise ValueError("DEAPI_REDIS_REQUIRED is set but DEAPI_REDIS_HOST is not")
         if self.redis_host and self.redis_scheme == "tls" and not self.redis_ca_file:
             raise ValueError(
                 "DEAPI_REDIS_SCHEME=tls needs DEAPI_REDIS_CA_FILE "
-                "(the instance uses a self-signed certificate)"
+                "(the CA bundle that verifies the server certificate)"
             )
         return self
 

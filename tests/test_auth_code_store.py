@@ -205,7 +205,7 @@ def test_build_redis_client_sets_short_timeouts(tls_settings):
 
 @pytest.mark.skipif(
     sys.platform == "win32",
-    reason="Windows retries a refused TCP connect for ~2 s; prod and CI run on Linux",
+    reason="Windows retries a refused TCP connect for ~2 s; deployments and CI run on Linux",
 )
 async def test_unreachable_redis_fails_fast():
     with socket.socket() as sock:
