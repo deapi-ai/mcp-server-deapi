@@ -46,6 +46,8 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_SECONDS = 3600  # 1 hour
 REFRESH_TOKEN_EXPIRATION_SECONDS = 2592000  # 30 days
 AUTHORIZATION_CODE_EXPIRATION_SECONDS = 600  # 10 minutes
+# Retry-After on a 503 from /token while the authorization code store is unreachable
+CODE_STORE_RETRY_AFTER_SECONDS = 5
 
 # Allowed redirect URI schemes (prevent javascript:, data:, etc.)
 ALLOWED_REDIRECT_SCHEMES = {"http", "https"}
@@ -493,6 +495,7 @@ async def token_endpoint(request: Request) -> JSONResponse:
                     "error_description": "Authorization temporarily unavailable, try again",
                 },
                 status_code=503,
+                headers={"Retry-After": str(CODE_STORE_RETRY_AFTER_SECONDS)},
             )
         if not auth_data:
             logger.error("Invalid authorization code")
