@@ -94,7 +94,6 @@ PRICE_TESTS = [
             "model": "Bge_M3_FP16",
         },
     },
-    # videos/background-removals: no production model with inference_type "vid-rmbg" yet — skip
     {
         "name": "videos/upscales/price (dimension-based)",
         "endpoint": "videos/upscales/price",
@@ -131,7 +130,13 @@ async def run_test(client: httpx.AsyncClient, test: dict) -> dict:
         elif status == 401:
             return {"name": name, "status": "AUTH", "http": status, "body": body}
         elif status == 422:
-            return {"name": name, "status": "FAIL", "http": status, "detail": "Validation error - check params", "body": body}
+            return {
+                "name": name,
+                "status": "FAIL",
+                "http": status,
+                "detail": "Validation error - check params",
+                "body": body,
+            }
         else:
             return {"name": name, "status": "FAIL", "http": status, "body": body}
 

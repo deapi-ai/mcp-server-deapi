@@ -1,23 +1,33 @@
 [project]
-name = "mcp-server-deapi"
-version = "0.4.0"
+name = "deapi-mcp"
+version = "0.5.0"
 description = "Production-ready MCP server for the deAPI REST API"
 authors = [
     {name = "Adam Iglewski"}
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=2.0.0",
+    "fastmcp>=4.0.4,<5",
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    "tenacity>=9.0.0",
+    # The deAPI SDK backs the HTTP client. Pinned to a published git tag tarball
+    # (the SDK is not on PyPI yet); bump the tag when the SDK releases.
+    "deapi-sdk @ https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.1.tar.gz",
     "python-dotenv>=1.0.0",
     "uvicorn>=0.30.0",
     "PyJWT>=2.8.0",
     "cryptography>=42.0.0",
+    # Optional shared store for OAuth authorization codes across replicas; with no
+    # host configured the server falls back to an in-process store.
+    "redis>=5.2,<8",
+    # Pinned for AppStatus.disable_automatic_graceful_drain() (deapi_mcp/server_remote.py);
+    # mcp itself only requires >=3.0.0.
+    "sse-starlette>=3.5.0,<4",
 ]
+# Metrics exposition (e.g. Prometheus) is not a core dependency: a deployment that wants
+# it injects its own overlay through create_app(server, metrics=...).
 
 [project.optional-dependencies]
 dev = [
@@ -26,35 +36,42 @@ dev = [
     "pytest-mock>=3.14.0",
     "black>=24.0.0",
     "ruff>=0.3.0",
+    "fakeredis[lua]>=2.26",
+    "mypy>=1.5",
 ]
 
 [project.scripts]
-mcp-server-deapi = "src.server_remote:main"
+deapi-mcp = "deapi_mcp.server_remote:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src"]
+[tool.hatch.metadata]
+# The deapi-sdk dependency is a direct URL reference (a published git tag tarball)
+# rather than a PyPI release; hatchling rejects direct references unless opted in.
+allow-direct-references = true
 
-[tool.hatch.build.targets.sdist]                                                                                                            
-exclude = [                                                                                                                                 
-    "/.gitignore",                                                                                                                          
-    "/.dockerignore",                                                                                                                       
-    "/.env.example",                                                                                                                        
-    "/Dockerfile",                                                                                                                          
-    "/docker-compose.yml",                                                                                                                  
-    "/AUTH.md",                                                                                                                             
-    "/CLAUDE.md",                                                                                                                           
-    "/DEPLOYMENT.md",                                                                                                                       
-    "/tests",                                                                                                                               
-    "/uv.lock",                                                                                                                             
+[tool.hatch.build.targets.wheel]
+packages = ["deapi_mcp"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/.gitignore",
+    "/.dockerignore",
+    "/.env.example",
+    "/Dockerfile",
+    "/docker-compose.yml",
+    "/AUTH.md",
+    "/CLAUDE.md",
+    "/DEPLOYMENT.md",
+    "/tests",
+    "/uv.lock",
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
@@ -62,7 +79,12 @@ ignore = ["E501"]
 
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -1,34 +1,36 @@
 """Tests for model-aware tool description enrichment middleware."""
 
-import asyncio
 import time
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.middleware import (
+from deapi_mcp.middleware import (
     INFERENCE_TYPE_TO_TOOLS,
     ModelEnrichmentMiddleware,
     _build_enrichment_block,
     _cache,
     _fetch_and_index_models,
     _format_model_info,
+    ensure_model_cache,
     get_cached_model,
     get_cached_models_for_tool,
 )
-from src.schemas import ModelInfo, ModelsResponse
-
+from deapi_mcp.schemas import ModelInfo, ModelsResponse
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_model(
     slug: str,
     inference_types: list,
     info=None,
     loras=None,
+    status=None,
+    tags=None,
 ) -> ModelInfo:
     """Create a ModelInfo for testing."""
     return ModelInfo(
@@ -37,11 +39,14 @@ def make_model(
         inference_types=inference_types,
         info=info,
         loras=loras,
+        status=status,
+        tags=tags,
     )
 
 
 class FakeTool(BaseModel):
     """Minimal Pydantic model that mimics FastMCP Tool for testing."""
+
     name: str
     description: str = ""
 
@@ -51,25 +56,34 @@ def _reset_cache():
     _cache.tool_models.clear()
     _cache.models_by_slug.clear()
     _cache.enrichments.clear()
-    _cache.last_fetched = 0.0
+    _cache.last_fetched = None
 
 
 # ---------------------------------------------------------------------------
 # _format_model_info tests
 # ---------------------------------------------------------------------------
 
+
 class TestFormatModelInfo:
     def test_full_image_model(self):
-        model = make_model("Flux1schnell", ["txt2img"], info={
-            "limits": {
-                "min_steps": 1, "max_steps": 10,
-                "min_width": 256, "max_width": 2048,
-                "min_height": 256, "max_height": 2048,
-                "min_guidance": 0, "max_guidance": 20,
+        model = make_model(
+            "Flux1schnell",
+            ["txt2img"],
+            info={
+                "limits": {
+                    "min_steps": 1,
+                    "max_steps": 10,
+                    "min_width": 256,
+                    "max_width": 2048,
+                    "min_height": 256,
+                    "max_height": 2048,
+                    "min_guidance": 0,
+                    "max_guidance": 20,
+                },
+                "defaults": {"steps": "4", "guidance": "0"},
+                "features": {"supports_guidance": "0"},
             },
-            "defaults": {"steps": "4", "guidance": "0"},
-            "features": {"supports_guidance": "0"},
-        })
+        )
         result = _format_model_info(model)
         assert "`Flux1schnell`" in result
         assert "steps=1-10" in result
@@ -79,14 +93,20 @@ class TestFormatModelInfo:
         assert "guidance=0" in result
 
     def test_model_with_guidance_range(self):
-        model = make_model("SDModel", ["txt2img"], info={
-            "limits": {
-                "min_steps": 1, "max_steps": 50,
-                "min_guidance": 1, "max_guidance": 20,
+        model = make_model(
+            "SDModel",
+            ["txt2img"],
+            info={
+                "limits": {
+                    "min_steps": 1,
+                    "max_steps": 50,
+                    "min_guidance": 1,
+                    "max_guidance": 20,
+                },
+                "defaults": {"steps": "20", "guidance": "7.5"},
+                "features": {"supports_guidance": "1"},
             },
-            "defaults": {"steps": "20", "guidance": "7.5"},
-            "features": {"supports_guidance": "1"},
-        })
+        )
         result = _format_model_info(model)
         assert "guidance=1-20" in result
         assert "default 7.5" in result
@@ -103,50 +123,75 @@ class TestFormatModelInfo:
         assert result == "  - `NoneModel`"
 
     def test_video_model_with_fps_and_frames(self):
-        model = make_model("VideoGen", ["txt2video"], info={
-            "limits": {
-                "min_steps": 1, "max_steps": 50,
-                "min_fps": 30, "max_fps": 30,
-                "min_frames": 10, "max_frames": 120,
+        model = make_model(
+            "VideoGen",
+            ["txt2video"],
+            info={
+                "limits": {
+                    "min_steps": 1,
+                    "max_steps": 50,
+                    "min_fps": 30,
+                    "max_fps": 30,
+                    "min_frames": 10,
+                    "max_frames": 120,
+                },
+                "defaults": {"steps": "1"},
+                "features": {},
             },
-            "defaults": {"steps": "1"},
-            "features": {},
-        })
+        )
         result = _format_model_info(model)
         assert "fps=30 (fixed)" in result
         assert "frames=10-120" in result
         assert "steps=1-50" in result
 
     def test_video_model_with_fps_range(self):
-        model = make_model("VideoFlex", ["txt2video"], info={
-            "limits": {"min_fps": 24, "max_fps": 60},
-            "defaults": {},
-            "features": {},
-        })
+        model = make_model(
+            "VideoFlex",
+            ["txt2video"],
+            info={
+                "limits": {"min_fps": 24, "max_fps": 60},
+                "defaults": {},
+                "features": {},
+            },
+        )
         result = _format_model_info(model)
         assert "fps=24-60" in result
         assert "(fixed)" not in result
 
     def test_model_with_loras(self):
-        model = make_model("LoraModel", ["txt2img"], info={
-            "limits": {},
-            "defaults": {},
-            "features": {},
-        }, loras=[{"name": "style1"}, {"name": "style2"}])
+        model = make_model(
+            "LoraModel",
+            ["txt2img"],
+            info={
+                "limits": {},
+                "defaults": {},
+                "features": {},
+            },
+            loras=[{"name": "style1"}, {"name": "style2"}],
+        )
         result = _format_model_info(model)
-        assert "2 LoRAs available" in result
+        # The API validates the name, so the names are what an LLM needs.
+        assert "loras: style1, style2" in result
 
     def test_music_model_with_duration_and_bpm(self):
-        model = make_model("MusicGen", ["txt2music"], info={
-            "limits": {
-                "min_steps": 8, "max_steps": 100,
-                "min_duration": 10, "max_duration": 300,
-                "min_bpm": 60, "max_bpm": 200,
-                "min_guidance": 0, "max_guidance": 15,
+        model = make_model(
+            "MusicGen",
+            ["txt2music"],
+            info={
+                "limits": {
+                    "min_steps": 8,
+                    "max_steps": 100,
+                    "min_duration": 10,
+                    "max_duration": 300,
+                    "min_bpm": 60,
+                    "max_bpm": 200,
+                    "min_guidance": 0,
+                    "max_guidance": 15,
+                },
+                "defaults": {"steps": "32", "guidance": "3.5"},
+                "features": {"supports_guidance": "1"},
             },
-            "defaults": {"steps": "32", "guidance": "3.5"},
-            "features": {"supports_guidance": "1"},
-        })
+        )
         result = _format_model_info(model)
         assert "`MusicGen`" in result
         assert "duration=10-300s" in result
@@ -155,11 +200,15 @@ class TestFormatModelInfo:
         assert "guidance=0-15" in result
 
     def test_model_with_empty_sub_dicts(self):
-        model = make_model("Bare", ["txt2img"], info={
-            "limits": {},
-            "defaults": {},
-            "features": {},
-        })
+        model = make_model(
+            "Bare",
+            ["txt2img"],
+            info={
+                "limits": {},
+                "defaults": {},
+                "features": {},
+            },
+        )
         result = _format_model_info(model)
         assert result == "  - `Bare`"
 
@@ -167,6 +216,7 @@ class TestFormatModelInfo:
 # ---------------------------------------------------------------------------
 # _build_enrichment_block tests
 # ---------------------------------------------------------------------------
+
 
 class TestBuildEnrichmentBlock:
     def test_multiple_models(self):
@@ -185,22 +235,116 @@ class TestBuildEnrichmentBlock:
         assert result == ""
 
     def test_single_model_with_details(self):
-        models = [make_model("DetailedModel", ["txt2img"], info={
-            "limits": {"min_steps": 1, "max_steps": 50},
-            "defaults": {"steps": "20"},
-            "features": {},
-        })]
+        models = [
+            make_model(
+                "DetailedModel",
+                ["txt2img"],
+                info={
+                    "limits": {"min_steps": 1, "max_steps": 50},
+                    "defaults": {"steps": "20"},
+                    "features": {},
+                },
+            )
+        ]
         result = _build_enrichment_block(models)
         assert "---" in result
         assert "`DetailedModel`" in result
         assert "steps=1-50" in result
 
 
+class TestTestModelOrdering:
+    """DEV-2075: the catalogue interleaves partner test models with ours and
+    the enrichment used to keep that order, so gpt-image-* headed the
+    text_to_image list with nothing to say they were experimental."""
+
+    def _slugs_in_order(self, block: str) -> list:
+        return [line.split("`")[1] for line in block.splitlines() if line.startswith("  - `")]
+
+    def test_test_models_sort_after_standard_ones(self):
+        models = [
+            make_model("nano-banana-2", ["txt2img"], status="test_model", tags=["experimental"]),
+            make_model("gpt-image-2", ["txt2img"], status="test_model", tags=["experimental"]),
+            make_model("ZImageTurbo_INT8", ["txt2img"], status="standard_model"),
+            make_model("Flux1schnell", ["txt2img"], status="standard_model", tags=["new"]),
+        ]
+        block = _build_enrichment_block(models)
+        assert self._slugs_in_order(block) == [
+            "ZImageTurbo_INT8",
+            "Flux1schnell",
+            "nano-banana-2",
+            "gpt-image-2",
+        ], "standard models first, catalogue order kept within each group"
+
+    def test_test_models_are_marked_and_explained(self):
+        models = [
+            make_model("gpt-image-2", ["txt2img"], status="test_model"),
+            make_model("Flux1schnell", ["txt2img"], status="standard_model"),
+        ]
+        block = _build_enrichment_block(models)
+        assert "`gpt-image-2` (test model)" in block
+        assert "`Flux1schnell` (test model)" not in block
+        assert "experimental" in block, "the note explaining the marker is appended"
+
+    def test_no_note_without_test_models(self):
+        block = _build_enrichment_block(
+            [make_model("Flux1schnell", ["txt2img"], status="standard_model")]
+        )
+        assert "test model" not in block
+
+    def test_missing_status_is_a_standard_model(self):
+        """Older API responses carry no status; enrichment must not break or demote them."""
+        models = [
+            make_model("gpt-image-2", ["txt2img"], status="test_model"),
+            make_model("Legacy", ["txt2img"]),
+        ]
+        block = _build_enrichment_block(models)
+        assert self._slugs_in_order(block) == ["Legacy", "gpt-image-2"]
+        assert "`Legacy` (test model)" not in block
+
+    def test_status_and_tags_are_declared_fields(self):
+        m = ModelInfo.model_validate(
+            {
+                "name": "x",
+                "slug": "x",
+                "inference_types": ["txt2img"],
+                "status": "test_model",
+                "tags": ["experimental"],
+            }
+        )
+        assert m.status == "test_model"
+        assert m.tags == ["experimental"]
+        assert (
+            ModelInfo.model_validate({"name": "y", "slug": "y", "inference_types": []}).status
+            is None
+        )
+
+
 # ---------------------------------------------------------------------------
 # _fetch_and_index_models tests
 # ---------------------------------------------------------------------------
 
+
 class TestFetchAndIndexModels:
+    @pytest.mark.asyncio
+    async def test_test_model_first_in_catalogue_lands_last(self):
+        """Mock /models with the test model on position one; the enriched block puts it last."""
+        mock_response = ModelsResponse(
+            data=[
+                make_model("gpt-image-2", ["txt2img"], status="test_model"),
+                make_model("Flux1schnell", ["txt2img"], status="standard_model"),
+            ]
+        )
+        mock_client = AsyncMock()
+        mock_client.get_models = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
+            await _fetch_and_index_models()
+
+        block = _cache.enrichments["text_to_image"]
+        assert block.index("`Flux1schnell`") < block.index("`gpt-image-2` (test model)")
+
     @pytest.fixture(autouse=True)
     def reset(self):
         _reset_cache()
@@ -220,23 +364,27 @@ class TestFetchAndIndexModels:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("src.deapi_client.get_client", return_value=mock_client):
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
             await _fetch_and_index_models()
 
         assert "text_to_image" in _cache.tool_models
         assert "text_to_image_price" in _cache.tool_models
         assert "text_to_video" in _cache.tool_models
         assert "image_to_video" in _cache.tool_models
-        assert _cache.last_fetched > 0
+        assert _cache.last_fetched is not None
 
     @pytest.mark.asyncio
     async def test_builds_enrichment_blocks(self):
         mock_models = [
-            make_model("ImgModel", ["txt2img"], info={
-                "limits": {"min_steps": 1, "max_steps": 50},
-                "defaults": {"steps": "20"},
-                "features": {},
-            }),
+            make_model(
+                "ImgModel",
+                ["txt2img"],
+                info={
+                    "limits": {"min_steps": 1, "max_steps": 50},
+                    "defaults": {"steps": "20"},
+                    "features": {},
+                },
+            ),
         ]
         mock_response = ModelsResponse(data=mock_models)
 
@@ -245,7 +393,7 @@ class TestFetchAndIndexModels:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("src.deapi_client.get_client", return_value=mock_client):
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
             await _fetch_and_index_models()
 
         assert "text_to_image" in _cache.enrichments
@@ -264,7 +412,7 @@ class TestFetchAndIndexModels:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("src.deapi_client.get_client", return_value=mock_client):
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
             await _fetch_and_index_models()
 
         assert len(_cache.tool_models) == 0
@@ -274,6 +422,7 @@ class TestFetchAndIndexModels:
 # ---------------------------------------------------------------------------
 # Cache staleness tests
 # ---------------------------------------------------------------------------
+
 
 class TestCacheStaleness:
     @pytest.fixture(autouse=True)
@@ -301,6 +450,7 @@ class TestCacheStaleness:
 # ---------------------------------------------------------------------------
 # ModelEnrichmentMiddleware tests
 # ---------------------------------------------------------------------------
+
 
 class TestModelEnrichmentMiddleware:
     @pytest.fixture(autouse=True)
@@ -374,7 +524,7 @@ class TestModelEnrichmentMiddleware:
         middleware = ModelEnrichmentMiddleware(ttl=300.0)
         context = MagicMock()
 
-        with patch("src.deapi_client.get_client", return_value=mock_client):
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
             result = await middleware.on_list_tools(context, mock_call_next)
 
         assert "`FreshModel`" in result[0].description
@@ -395,14 +545,14 @@ class TestModelEnrichmentMiddleware:
         middleware = ModelEnrichmentMiddleware(ttl=300.0)
         context = MagicMock()
 
-        with patch("src.deapi_client.get_client", return_value=mock_client):
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
             result = await middleware.on_list_tools(context, mock_call_next)
 
         # Should return original tools unchanged
         assert len(result) == 1
         assert result[0].description == "Generate images"
         # Should update last_fetched to prevent retry storm
-        assert _cache.last_fetched > 0
+        assert _cache.last_fetched is not None
 
     @pytest.mark.asyncio
     async def test_fetch_failure_does_not_retry_immediately(self):
@@ -419,7 +569,7 @@ class TestModelEnrichmentMiddleware:
         middleware = ModelEnrichmentMiddleware(ttl=300.0)
         context = MagicMock()
 
-        with patch("src.deapi_client.get_client", return_value=mock_client):
+        with patch("deapi_mcp.deapi_client.get_client", return_value=mock_client):
             await middleware.on_list_tools(context, mock_call_next)
             # Second call should NOT retry — cache TTL prevents it
             await middleware.on_list_tools(context, mock_call_next)
@@ -474,7 +624,7 @@ class TestModelEnrichmentMiddleware:
         middleware = ModelEnrichmentMiddleware(ttl=300.0)
         context = MagicMock()
 
-        with patch("src.middleware._fetch_and_index_models") as mock_fetch:
+        with patch("deapi_mcp.middleware._fetch_and_index_models") as mock_fetch:
             result = await middleware.on_list_tools(context, mock_call_next)
 
         mock_fetch.assert_not_awaited()
@@ -504,6 +654,7 @@ class TestModelEnrichmentMiddleware:
 # Mapping coverage
 # ---------------------------------------------------------------------------
 
+
 class TestInferenceTypeMapping:
     def test_all_inference_types_have_two_tools(self):
         """Each inference type should map to both a main tool and a price tool."""
@@ -516,11 +667,23 @@ class TestInferenceTypeMapping:
 
     def test_expected_inference_types_present(self):
         expected = [
-            "txt2img", "img2img", "txt2video", "img2video",
-            "audio2video", "txt2audio", "txt2music", "txt2embedding",
-            "audio_file2text", "audio2text",
-            "video2text", "video_file2text",
-            "img2txt", "img-rmbg", "img-upscale",
+            "txt2img",
+            "img2img",
+            "txt2video",
+            "img2video",
+            "audio2video",
+            "txt2audio",
+            "txt2music",
+            "txt2embedding",
+            "audio_file2text",
+            "audio2text",
+            "video2text",
+            "video_file2text",
+            "img2txt",
+            "img-rmbg",
+            "img-upscale",
+            "video2desc",
+            "video_file2desc",
         ]
         for itype in expected:
             assert itype in INFERENCE_TYPE_TO_TOOLS, f"Missing mapping for {itype}"
@@ -530,6 +693,7 @@ class TestInferenceTypeMapping:
 # Public cache accessor tests
 # ---------------------------------------------------------------------------
 
+
 class TestCacheAccessors:
     def setup_method(self):
         _reset_cache()
@@ -538,9 +702,13 @@ class TestCacheAccessors:
         _reset_cache()
 
     def test_get_cached_model_found(self):
-        model = make_model("Flux1schnell", ["txt2img"], info={
-            "defaults": {"steps": 4},
-        })
+        model = make_model(
+            "Flux1schnell",
+            ["txt2img"],
+            info={
+                "defaults": {"steps": 4},
+            },
+        )
         _cache.models_by_slug["Flux1schnell"] = model
         result = get_cached_model("Flux1schnell")
         assert result is model
@@ -581,7 +749,7 @@ class TestCacheAccessors:
         mock_client = AsyncMock()
         mock_client.get_models = AsyncMock(return_value=mock_response)
 
-        with patch("src.deapi_client.get_client") as mock_get_client:
+        with patch("deapi_mcp.deapi_client.get_client") as mock_get_client:
             mock_get_client.return_value = mock_client
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -590,3 +758,32 @@ class TestCacheAccessors:
         assert "Flux1schnell" in _cache.models_by_slug
         assert "WhisperLargeV3" in _cache.models_by_slug
         assert _cache.models_by_slug["Flux1schnell"].slug == "Flux1schnell"
+
+
+class TestEnsureModelCache:
+    """Tools populate the cache on demand; they cannot rely on a prior tools/list."""
+
+    def setup_method(self):
+        _reset_cache()
+
+    def teardown_method(self):
+        _reset_cache()
+
+    @pytest.mark.asyncio
+    async def test_empty_cache_is_fetched_once(self):
+        with patch("deapi_mcp.middleware._fetch_and_index_models", new=AsyncMock()) as fetch:
+            fetch.side_effect = lambda: setattr(_cache, "last_fetched", time.monotonic())
+            await ensure_model_cache()
+            await ensure_model_cache()
+        assert fetch.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_failed_fetch_is_stamped_not_retried_on_every_call(self):
+        with patch(
+            "deapi_mcp.middleware._fetch_and_index_models",
+            new=AsyncMock(side_effect=RuntimeError("down")),
+        ) as fetch:
+            await ensure_model_cache()
+            await ensure_model_cache()
+        assert fetch.await_count == 1
+        assert _cache.last_fetched is not None
