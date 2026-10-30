@@ -50,7 +50,7 @@ The primary server is `deapi_mcp/server_remote.py` — an HTTP/SSE-based MCP ser
 - **`deapi_mcp/config.py`** - Configuration via environment variables (prefix: `DEAPI_`)
 - **`deapi_mcp/middleware.py`** - Model cache middleware that enriches tool descriptions with available models
 - **`deapi_mcp/auth_code_store.py`** - Single-use OAuth authorization codes: Redis when `DEAPI_REDIS_HOST` is set (any replica can redeem a code), in-memory otherwise (single replica only)
-- **`deapi_mcp/observability.py`** - Per-call outcome (`CallOutcome` on a ContextVar, `note_*` recorders, `classify`) and injectable no-op sinks; the core has no metrics dependency
+- **`deapi_mcp/observability.py`** - Per-call outcome (`CallOutcome` on a ContextVar, `note_*` recorders, `classify`) and injectable no-op sinks; the core has no metrics dependency. `classify` labels a failed call from its most recent note; work whose failure the call survives runs inside `errors_tolerated()` (or calls `forget_api_error()` before a retry) so it never labels the call
 - **`deapi_mcp/server_remote.py`** - `register_core_tools(server)`, `create_app(server, *, metrics=None)` and `build_app()`; a deployment can import the core and inject a metrics overlay
 - **`deapi_mcp/webhooks.py`** - Internal completion webhooks: HMAC-verified receiver at `/webhooks/deapi` and the job registry the poller waits on. Only mounted when `DEAPI_WEBHOOKS_INTERNAL` is set
 
@@ -93,7 +93,9 @@ Tools are organized by category:
 
 ## Configuration
 
-Environment variables (prefix `DEAPI_`):
+Environment variables (prefix `DEAPI_`). An empty value counts as unset (the default
+applies). Keep comments on their own line — never after a value, where `--env-file`-style
+loaders keep them as part of it. Example-only values (hosts, URLs, secrets) stay commented out.
 
 ```bash
 DEAPI_API_BASE_URL=https://api.deapi.ai
@@ -109,12 +111,13 @@ DEAPI_POLLING_AUDIO__TIMEOUT=300.0
 # Internal completion webhooks (see deapi_mcp/webhooks.py). Off by default.
 # Receiver URL must be reachable from api.deapi.ai; half-configured refuses to start.
 DEAPI_WEBHOOKS_INTERNAL=false
-DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
-DEAPI_WEBHOOK_SECRET=<32-255 chars>
+# DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
+# Secret the API signs callbacks with: 32-255 characters
+# DEAPI_WEBHOOK_SECRET=
 DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 
 # OAuth authorization code store. Unset host = in-memory store, single replica only.
-DEAPI_REDIS_HOST=redis.example.com
+# DEAPI_REDIS_HOST=redis.example.com
 DEAPI_REDIS_DB=11
 DEAPI_REDIS_PREFIX=deapi_mcp_database_
 DEAPI_REDIS_REQUIRED=false
