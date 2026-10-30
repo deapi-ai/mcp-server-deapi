@@ -67,7 +67,7 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 ### Utility Tools
 - `get_balance` - Check account balance
 - `get_available_models` - List available AI models with specifications
-- `check_job_status` - Query async job status by ID. A failed job reports `success: false` with `error_reason`, `error_code`, `retryable` and `refunded`
+- `check_job_status` - Query async job status by ID; with `wait_seconds` it waits for the job and returns the finished result in the original tool's shape. A failed job reports `success: false` with `error_reason`, `error_code`, `retryable` and `refunded`
 
 ### Webhooks
 
@@ -123,7 +123,8 @@ pip install -e .
 # Copy the example file
 cp .env.example .env
 
-# Edit with your preferences (optional - defaults work fine)
+# Edit with your preferences (optional - defaults work fine locally).
+# Set DEAPI_JWT_SECRET_KEY before exposing the server beyond localhost.
 # DEAPI_API_BASE_URL=https://api.deapi.ai
 # DEAPI_HTTP_TIMEOUT=30.0
 # DEAPI_MAX_RETRIES=3
@@ -137,14 +138,17 @@ The server can run in two modes:
 
 **Local Mode** (for use with Claude Desktop on the same machine):
 ```bash
-python -m deapi_mcp.server_remote
+MCP_HOST=127.0.0.1 python -m deapi_mcp.server_remote
 ```
 
-The server will start on `http://localhost:8000` by default.
+The server starts on `http://localhost:8000`. On loopback it may run without `DEAPI_JWT_SECRET_KEY`
+(it then signs OAuth tokens with a per-process key, so a restart logs clients out).
 
 **Remote Mode** (for deployment to a remote server):
 ```bash
-# Set host to accept external connections
+# A fixed signing key is required whenever the server binds beyond loopback
+# (the default host is 0.0.0.0) or uses Redis; without it the server refuses to start.
+export DEAPI_JWT_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
 MCP_HOST=0.0.0.0 MCP_PORT=8000 python -m deapi_mcp.server_remote
 ```
 
@@ -262,7 +266,7 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x).
 ### Error Handling
 
 - **HTTP Errors**: Reads are retried (3 attempts) with exponential backoff; a job submission is retried only when it provably was not processed (rate limited, or the connection never opened), so a job is never submitted twice
-- **Timeouts**: Reported as a failed result that still carries the `job_id`, so the job can be picked up with `check_job_status`
+- **Long jobs**: one tool call waits at most `DEAPI_TOOL_MAX_WAIT` (45 s, below the 60 s call timeout many MCP clients use). A job still running then returns `success: true, done: false` with its `job_id`, and `check_job_status(job_id, wait_seconds=...)` resumes the wait
 - **Job Failures**: Reported with the API's reason, error code, and whether the job is retryable / was refunded
 - **API Errors**: Properly formatted error responses
 
@@ -278,7 +282,9 @@ DEAPI_API_VERSION=v2
 # HTTP Client
 DEAPI_HTTP_TIMEOUT=30.0
 DEAPI_MAX_RETRIES=3
-DEAPI_RETRY_BACKOFF_FACTOR=2.0
+
+# Seconds one tool call waits before returning done=false and the job_id
+DEAPI_TOOL_MAX_WAIT=45.0
 
 # Polling Configuration (override defaults)
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
@@ -425,12 +431,12 @@ For production environments or when you want to host the MCP server on a remote 
 1. **Build and run with Docker:**
 ```bash
 docker build -t mcp-server-deapi .
-docker run -d -p 8000:8000 --name mcp-server-deapi mcp-server-deapi
+docker run -d -p 8000:8000 --name mcp-server-deapi   -e DEAPI_JWT_SECRET_KEY="<a long random secret>"   --stop-timeout 960   mcp-server-deapi
 ```
 
-2. **Or use Docker Compose:**
+2. **Or use Docker Compose** (reads `DEAPI_JWT_SECRET_KEY` from the environment or `.env`):
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 3. **Configure Claude Desktop to connect:**
@@ -451,6 +457,7 @@ docker-compose up -d
 git clone https://github.com/deapi-ai/mcp-server-deapi.git
 cd mcp-server-deapi
 pip install -e .
+export DEAPI_JWT_SECRET_KEY="<a long random secret>"
 python -m deapi_mcp.server_remote
 ```
 
@@ -519,7 +526,7 @@ If you get model errors:
 ### Remote Connection Issues
 
 If remote MCP connection fails:
-1. Test the endpoint: `curl -N http://your-server:8000/mcp`
+1. Test the server: `curl http://your-server:8000/health` (a bare `GET /mcp` answers 405: the transport is stateless, POST only)
 2. Check server logs: `docker logs mcp-server-deapi` or `journalctl -u mcp-server-deapi`
 3. Verify firewall rules and SSL certificates (if using HTTPS)
 4. Ensure MCP endpoint is accessible from your client

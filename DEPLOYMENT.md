@@ -26,10 +26,13 @@ uv pip install -e .
 pip install -e .
 ```
 
-2. Set environment variables (optional):
+2. Set environment variables:
 ```bash
 export MCP_HOST=0.0.0.0  # Listen on all interfaces
 export MCP_PORT=8000     # Port to listen on
+# Required off loopback: OAuth tokens are signed with it, and without it the server
+# refuses to start. Use the same value on every replica and keep it across restarts.
+export DEAPI_JWT_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 ```
 
 3. Run the remote server:
@@ -53,8 +56,11 @@ User=your-user
 WorkingDirectory=/path/to/mcp-server-deapi
 Environment="MCP_HOST=0.0.0.0"
 Environment="MCP_PORT=8000"
+Environment="DEAPI_JWT_SECRET_KEY=<a long random secret>"
 ExecStart=/usr/bin/python3 -m deapi_mcp.server_remote
 Restart=always
+# Let in-flight tool calls finish on stop (MCP_GRACEFUL_SHUTDOWN_SECONDS defaults to 930)
+TimeoutStopSec=960
 
 [Install]
 WantedBy=multi-user.target
@@ -82,6 +88,8 @@ docker run -d \
   -p 8000:8000 \
   --name mcp-server-deapi \
   --restart unless-stopped \
+  --stop-timeout 960 \
+  -e DEAPI_JWT_SECRET_KEY="<a long random secret>" \
   mcp-server-deapi
 ```
 
@@ -92,30 +100,35 @@ docker logs -f mcp-server-deapi
 
 #### Using Docker Compose
 
-Create `docker-compose.yml`:
-```yaml
-version: '3.8'
+The repository ships a `docker-compose.yml`. It requires `DEAPI_JWT_SECRET_KEY` (from the shell
+or a `.env` file next to it) and gives the container 960 s to stop gracefully:
 
-services:
-  mcp-server-deapi:
-    build: .
-    ports:
-      - "8000:8000"
-    environment:
-      - MCP_HOST=0.0.0.0
-      - MCP_PORT=8000
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-```
-
-Run with:
 ```bash
-docker-compose up -d
+export DEAPI_JWT_SECRET_KEY="<a long random secret>"
+docker compose up -d
 ```
+
+### Running More Than One Replica
+
+The transport is stateless (no MCP session id), so any replica can serve any request. Two
+settings must be shared:
+
+- **`DEAPI_JWT_SECRET_KEY`**: the same value on every replica, or tokens issued by one are
+  rejected by the others.
+- **`DEAPI_REDIS_HOST`** (and the other `DEAPI_REDIS_*` settings): OAuth authorization codes are
+  single-use and must be redeemable on whichever replica receives `/token`. Set
+  `DEAPI_REDIS_REQUIRED=true` so a replica without Redis refuses to start instead of silently
+  keeping codes in memory.
+
+Leave `DEAPI_WEBHOOKS_INTERNAL` off with several replicas: the completion callback can reach a
+replica that is not waiting for that job (the job still completes, through polling).
+
+### Graceful Shutdown
+
+On SIGTERM the server stops accepting connections and lets in-flight tool calls finish for up to
+`MCP_GRACEFUL_SHUTDOWN_SECONDS` (930 s by default). Give the process manager a longer stop timeout
+(`TimeoutStopSec`, `--stop-timeout`, `stop_grace_period`, or the pod's
+`terminationGracePeriodSeconds`), or lower the setting to fit it.
 
 ### Option 3: Cloud Platform Deployment
 
@@ -166,25 +179,19 @@ Or if using HTTPS with a domain:
 
 ### From Other MCP Clients
 
-Use the MCP Python SDK to connect:
+The server speaks MCP over streamable HTTP at `/mcp`. With the FastMCP client:
 
 ```python
-from mcp import ClientSession
-from mcp.client.sse import sse_client
+import asyncio
+from fastmcp import Client
 
-async def connect_to_remote_server():
-    async with sse_client("http://your-server-ip:8000/mcp") as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
+async def main():
+    # A deAPI API token, or an access token obtained through the OAuth flow
+    async with Client("https://mcp-server-deapi.yourdomain.com/mcp", auth="YOUR_DEAPI_TOKEN") as client:
+        tools = await client.list_tools()
+        balance = await client.call_tool("get_balance", {})
 
-            # List available tools
-            tools = await session.list_tools()
-
-            # Call a tool (authentication is handled at the connection level)
-            result = await session.call_tool(
-                "get_available_models",
-                arguments={}
-            )
+asyncio.run(main())
 ```
 
 ## Security Considerations
@@ -227,35 +234,14 @@ mcp-server-deapi.yourdomain.com {
 }
 ```
 
-### 2. Add Authentication (Optional)
+### 2. Authentication
 
-For production, you may want to add authentication to the MCP server itself. FastMCP supports this:
+Every MCP request must carry a deAPI token, either directly (`Authorization: Bearer <deAPI token>`)
+or as an access token from the built-in OAuth 2.0 server; unauthenticated calls get `401`. The
+server never stores tokens. See [AUTH.md](AUTH.md).
 
-```python
-from fastmcp.server.auth.providers import APIKeyProvider
-
-# Add to server_remote.py
-auth = APIKeyProvider(api_keys=["your-secret-key"])
-mcp = FastMCP(
-    name="deAPI AI API",
-    auth=auth,
-    # ... rest of config
-)
-```
-
-Then clients need to include the API key:
-```json
-{
-  "mcpServers": {
-    "deapi-remote": {
-      "url": "https://mcp-server-deapi.yourdomain.com/mcp",
-      "headers": {
-        "X-API-Key": "your-secret-key"
-      }
-    }
-  }
-}
-```
+If the server sits behind a proxy, set `FORWARDED_ALLOW_IPS` to that proxy's address so only it
+can set `X-Forwarded-*` headers (the default `*` trusts any client).
 
 ### 3. Firewall Configuration
 
@@ -326,16 +312,12 @@ For lower-traffic scenarios:
 Test the remote server is working:
 
 ```bash
-# Test SSE endpoint
-curl -N http://your-server-ip:8000/mcp
+curl http://your-server-ip:8000/health
+# {"status": "healthy", "service": "deapi-mcp"}
 
-# Should return SSE stream
+# The MCP endpoint takes POST only: a bare GET answers 405 and an
+# unauthenticated POST answers 401, both of which mean the server is up.
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://your-server-ip:8000/mcp
 ```
 
-From Python:
-```python
-import httpx
-
-response = httpx.get("http://your-server-ip:8000/mcp", timeout=None)
-print(response.status_code)  # Should be 200
-```
+For a full round trip (tool list plus one free call), use the Python client example above.
