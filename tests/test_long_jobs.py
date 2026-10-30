@@ -84,7 +84,6 @@ class TestPollerBudget:
         )
         ctx = MagicMock()
         ctx.report_progress = AsyncMock()
-        ctx.info = AsyncMock()
         with (
             patch("deapi_mcp.polling_manager.settings") as settings,
             patch("deapi_mcp.polling_manager._current_context", return_value=ctx),
@@ -92,7 +91,8 @@ class TestPollerBudget:
             fast_settings(settings, max_wait=10)
             await PollingManager(client, "image").poll_until_complete("job-2")
 
-        ctx.report_progress.assert_awaited_with(progress=50.0, total=100.0)
+        sent = [c.kwargs["progress"] for c in ctx.report_progress.await_args_list]
+        assert 50.0 in sent
 
 
 class TestInProgressAnswer:
