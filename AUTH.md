@@ -4,7 +4,9 @@ This document explains how to use OAuth authentication to connect MCP clients (l
 
 ## Overview
 
-The deAPI MCP server supports **OAuth 2.0 Authorization Code** flow (with PKCE) in addition to direct Bearer token authentication. This enables MCP clients that require OAuth (like Claude Desktop's custom connectors) to authenticate and use the deAPI platform.
+The deAPI MCP server supports **OAuth 2.0 Authorization Code** flow (with PKCE) and the **Client Credentials** grant, in addition to direct Bearer token authentication. This enables MCP clients that require OAuth (like Claude Desktop's custom connectors) to authenticate and use the deAPI platform.
+
+The diagram below shows the Client Credentials grant, the simplest to follow. Connectors that use the Authorization Code flow first call `GET /authorize` (with a PKCE `code_challenge`) and then exchange the returned code at `POST /token` with `grant_type=authorization_code`, `code_verifier` and the deAPI token as `client_secret`; the result is the same JWT.
 
 ### How It Works
 
@@ -61,7 +63,7 @@ The deAPI MCP server supports **OAuth 2.0 Authorization Code** flow (with PKCE) 
 
 ### Step 1: Get Your deAPI Token
 
-Visit [https://api.deapi.ai](https://api.deapi.ai) and obtain your API token.
+Visit [deapi.ai/settings/api-keys](https://deapi.ai/settings/api-keys) and create an API token.
 
 ### Step 2: Configure Custom Connector
 
@@ -100,14 +102,17 @@ Returns OAuth server capabilities:
 ```json
 {
   "issuer": "http://your-server:8000",
+  "authorization_endpoint": "http://your-server:8000/authorize",
   "token_endpoint": "http://your-server:8000/token",
   "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],
+  "response_types_supported": ["code"],
   "token_endpoint_auth_methods_supported": [
     "client_secret_post",
     "client_secret_basic"
   ],
-  "response_types_supported": ["code"],
-  "scopes_supported": []
+  "code_challenge_methods_supported": ["S256"],
+  "scopes_supported": [],
+  "service_documentation": "https://api.deapi.ai"
 }
 ```
 
@@ -139,7 +144,7 @@ Returns JWT access token with refresh token:
   "aud": "deapi-mcp-api",
   "exp": 1763025038,
   "iat": 1763021438,
-  "deapi_token": "<encrypted>"  ← Embedded deAPI token (Fernet-encrypted)
+  "deapi_token_enc": "<encrypted>"  ← Embedded deAPI token (Fernet-encrypted)
 }
 ```
 
@@ -167,18 +172,26 @@ export JWT_TOKEN="eyJhbGc...xyz"
 
 ### 3. Use Token with MCP Endpoint
 
+The endpoint takes MCP JSON-RPC over POST:
+
 ```bash
 curl http://localhost:8000/mcp \
-  -H "Authorization: Bearer $JWT_TOKEN"
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
 ## Configuration
 
 ### JWT Signing Key (Production)
 
-By default, the server generates an ephemeral JWT signing key (tokens invalid after restart).
+Without `DEAPI_JWT_SECRET_KEY` the server generates an ephemeral signing key (tokens invalid after
+restart). It allows that only on loopback (`MCP_HOST=127.0.0.1`) without Redis; bound to any other
+address, or with Redis configured, it refuses to start, because replicas would each sign with a
+different key.
 
-**For production**, set a persistent signing key:
+**For production**, set a persistent signing key, the same on every replica:
 
 ```bash
 export DEAPI_JWT_SECRET_KEY="your-secret-key-at-least-32-characters-long"
@@ -192,7 +205,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 ### Server Configuration
 
-Start the server with OAuth enabled (automatically enabled):
+Start the server (OAuth is always enabled):
 
 ```bash
 python -m deapi_mcp.server_remote
@@ -201,7 +214,9 @@ python -m deapi_mcp.server_remote
 Environment variables:
 - `MCP_HOST` - Server host (default: `0.0.0.0`)
 - `MCP_PORT` - Server port (default: `8000`)
-- `DEAPI_JWT_SECRET_KEY` - JWT signing key (optional, recommended for production)
+- `DEAPI_JWT_SECRET_KEY` - JWT signing key (required unless bound to loopback)
+- `DEAPI_REDIS_HOST` (+ `DEAPI_REDIS_*`) - shared store for authorization codes; needed when more
+  than one replica serves `/authorize` and `/token`. Codes are single-use and expire after 10 minutes
 
 ## Backward Compatibility
 
@@ -238,13 +253,13 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 
 ### JWT Signing Key
 
-- **Development**: Ephemeral key generated at startup (tokens invalid after restart)
-- **Production**: Set `DEAPI_JWT_SECRET_KEY` environment variable
+- **Development** (loopback only): Ephemeral key generated at startup (tokens invalid after restart)
+- **Production**: Set `DEAPI_JWT_SECRET_KEY`; the server refuses to start without it off loopback
 - Key should be at least 32 characters and cryptographically random
 
 ### Stateless Design
 
-- No server-side token storage
+- No server-side token storage (authorization codes are kept for at most 10 minutes, then burnt on use)
 - JWT contains the deAPI token (Fernet-encrypted within the JWT payload)
 - Server verifies JWT signature on each request
 - deAPI API validates the embedded token
@@ -277,9 +292,9 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 
 - Check server startup logs for:
   ```
-  OAuth endpoints enabled:
-    - Metadata: http://0.0.0.0:8000/.well-known/oauth-authorization-server
-    - Token: http://0.0.0.0:8000/token
+  MCP endpoint: http://0.0.0.0:8000/mcp
+  OAuth server: http://0.0.0.0:8000/.well-known/oauth-authorization-server
+  Authentication: OAuth 2.0 (Authorization Code + PKCE) and Bearer tokens
   ```
 
 ## Support
