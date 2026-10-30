@@ -23,6 +23,7 @@ from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from fastmcp.tools import Tool
 
 from .auth import current_deapi_token
+from .observability import errors_tolerated
 from .schemas import ModelInfo
 
 logger = logging.getLogger(__name__)
@@ -208,7 +209,10 @@ async def ensure_model_cache(ttl: float = DEFAULT_CACHE_TTL, model: Optional[str
         if not stale:
             cache.last_miss_refresh = time.monotonic()
         try:
-            await _fetch_and_index_models(cache)
+            # The catalogue is optional here: a failed fetch is survived, so an error
+            # it notes must not become the label of the tool call that triggered it.
+            with errors_tolerated():
+                await _fetch_and_index_models(cache)
         except Exception:
             logger.warning("Failed to fetch the model catalogue", exc_info=True)
             cache.last_fetched = time.monotonic()

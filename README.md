@@ -272,7 +272,10 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x).
 
 ## Configuration
 
-Configuration can be set via environment variables (prefixed with `DEAPI_`):
+Configuration can be set via environment variables (prefixed with `DEAPI_`). A variable set to
+an empty value (`DEAPI_REDIS_PORT=`) counts as unset and takes the default. Comments go on their
+own line: some tools (`docker --env-file`, `kubectl create configmap --from-env-file`) keep text
+after a value, `# ...` included, as part of that value.
 
 ```bash
 # API Configuration
@@ -293,19 +296,23 @@ DEAPI_POLLING_AUDIO__TIMEOUT=300.0
 
 # Internal completion webhooks (off by default). The receiver URL must be
 # reachable from api.deapi.ai; a half-configured set refuses to start.
+# Uncomment and fill in all three to turn them on.
 DEAPI_WEBHOOKS_INTERNAL=false
-DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
-DEAPI_WEBHOOK_SECRET=<32-255 chars>
+# DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
+# Secret the API signs callbacks with: 32-255 characters
+# DEAPI_WEBHOOK_SECRET=
 DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 
 # Shared store for OAuth authorization codes (optional). Unset host = in-memory
-# store, which only works with a single replica.
-DEAPI_REDIS_HOST=redis.example.com
+# store, which only works with a single replica. Uncomment and set your own host.
+# DEAPI_REDIS_HOST=redis.example.com
 DEAPI_REDIS_PORT=6379
-DEAPI_REDIS_PASSWORD=
+# DEAPI_REDIS_PASSWORD=
 DEAPI_REDIS_DB=11
-DEAPI_REDIS_SCHEME=plain          # plain | tls (tls needs DEAPI_REDIS_CA_FILE)
-DEAPI_REDIS_REQUIRED=false        # true = refuse to start without a Redis host
+# Connection scheme: plain | tls (tls needs DEAPI_REDIS_CA_FILE)
+DEAPI_REDIS_SCHEME=plain
+# true = refuse to start without a Redis host
+DEAPI_REDIS_REQUIRED=false
 
 # Seconds in-flight tool calls may run after SIGTERM before they are cancelled.
 # Keep it below your platform's termination grace period.

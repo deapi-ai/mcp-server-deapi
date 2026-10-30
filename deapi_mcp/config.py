@@ -235,6 +235,11 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="DEAPI_",
         extra="ignore",  # Ignore env vars not defined in Settings (e.g., MCP_HOST, DEAPI_JWT_SECRET_KEY)
+        # A blank value (`DEAPI_REDIS_PORT=`, as a secrets env or a pasted example often
+        # carries) means the default, not a parse error naming a field instead of the
+        # variable. Same rule as env_int() applies to MCP_*. No setting gives an empty
+        # string a meaning of its own.
+        env_ignore_empty=True,
         # A rejected value (a short DEAPI_METRICS_TOKEN) must not reach the logs of a pod that
         # fails to start; the messages name the variable instead.
         hide_input_in_errors=True,

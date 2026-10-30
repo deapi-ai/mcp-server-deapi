@@ -10,9 +10,10 @@ injects its recorders through the sinks below; with nothing injected every sink
 is a no-op, so the core records nothing and depends on nothing.
 """
 
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from dataclasses import dataclass, fields
+from typing import Any, Callable, Iterator, Optional
 
 from fastmcp.exceptions import NotFoundError
 from fastmcp.exceptions import ValidationError as FastMCPValidationError
@@ -35,6 +36,18 @@ class CallOutcome:
     job_error_reason: Optional[str] = None
     job_failed: bool = False
     input_error: bool = False
+    # When each kind of note was last made, in the order of this call's notes (0 =
+    # never). A call can carry on past an early error, so the note that ended it is
+    # the most recent one, not the first kind in a fixed list.
+    api_seq: int = 0
+    network_seq: int = 0
+    job_seq: int = 0
+    input_seq: int = 0
+    last_seq: int = 0
+
+    def next_seq(self) -> int:
+        self.last_seq += 1
+        return self.last_seq
 
 
 _current: ContextVar[Optional[CallOutcome]] = ContextVar("deapi_mcp_call_outcome", default=None)
@@ -56,12 +69,14 @@ def note_api_error(status: Optional[int], body: Optional[dict[str, Any]]) -> Non
     outcome.api_status = status
     code = body.get("code") if isinstance(body, dict) else None
     outcome.api_code = code if isinstance(code, str) else None
+    outcome.api_seq = outcome.next_seq()
 
 
 def note_network_error() -> None:
     outcome = _current.get()
     if outcome is not None:
         outcome.network_error = True
+        outcome.network_seq = outcome.next_seq()
 
 
 def note_job_failure(error_reason: Optional[str]) -> None:
@@ -69,12 +84,42 @@ def note_job_failure(error_reason: Optional[str]) -> None:
     if outcome is not None:
         outcome.job_failed = True
         outcome.job_error_reason = error_reason
+        outcome.job_seq = outcome.next_seq()
 
 
 def note_input_error() -> None:
     outcome = _current.get()
     if outcome is not None:
         outcome.input_error = True
+        outcome.input_seq = outcome.next_seq()
+
+
+def forget_api_error() -> None:
+    """Drop the API error noted so far: the caller recovered from it (e.g. by retrying)."""
+    outcome = _current.get()
+    if outcome is not None:
+        outcome.api_status = None
+        outcome.api_code = None
+        outcome.api_seq = 0
+
+
+@contextmanager
+def errors_tolerated() -> Iterator[None]:
+    """Discard whatever is noted inside the block.
+
+    For work whose failure the call deliberately survives, such as an optional
+    lookup: an error there did not end the call, so it must not label it. The
+    sequence keeps counting, so notes made after the block still order correctly.
+    """
+    outcome = _current.get()
+    saved = {f.name: getattr(outcome, f.name) for f in fields(CallOutcome)} if outcome else {}
+    try:
+        yield
+    finally:
+        if outcome is not None:
+            for name, value in saved.items():
+                if name != "last_seq":
+                    setattr(outcome, name, value)
 
 
 def classify_api(status: Optional[int], code: Optional[str]) -> str:
@@ -102,15 +147,22 @@ def classify(
         return "internal_error"
     if isinstance(result, dict) and result.get("success") is True:
         return "pending" if result.get("done") is False else "ok"
+    # Every kind of note made during the call, in precedence order. The most recent
+    # one decides, since it is what ended the call; an outcome built by hand (no
+    # sequence numbers) falls back to the precedence order alone.
+    candidates: list[tuple[int, str]] = []
     if outcome.job_failed:
-        return classify_job(outcome.job_error_reason)
+        candidates.append((outcome.job_seq, classify_job(outcome.job_error_reason)))
     if outcome.api_status is not None or outcome.api_code is not None:
-        return classify_api(outcome.api_status, outcome.api_code)
+        candidates.append((outcome.api_seq, classify_api(outcome.api_status, outcome.api_code)))
     if outcome.network_error:
-        return "deapi_error"
+        candidates.append((outcome.network_seq, "deapi_error"))
     if outcome.input_error:
-        return "invalid_input"
-    return "internal_error"
+        candidates.append((outcome.input_seq, "invalid_input"))
+    if not candidates:
+        return "internal_error"
+    # max() keeps the first of equal keys, so ties go to the earlier (higher-precedence) kind.
+    return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
 # ---------------------------------------------------------------------------
