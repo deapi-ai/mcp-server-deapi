@@ -1,7 +1,8 @@
 """Jobs that outlive one tool call.
 
-A job can run for an hour, but a tool call cannot stay open that long (Cloudflare
-ends a response it waited ~100s for with a 524). So a call waits at most
+A job can run for an hour, but a tool call cannot stay open that long (a proxy or
+CDN in front of the server may end a response it waited ~100s for, and MCP clients
+often drop a call at 60s). So a call waits at most
 `tool_max_wait`, hands back the running job, and check_job_status(job_id,
 wait_seconds) resumes the wait.
 """

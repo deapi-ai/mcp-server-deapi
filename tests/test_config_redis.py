@@ -33,15 +33,15 @@ def test_redis_defaults():
 
 
 def test_redis_env_names(monkeypatch):
-    monkeypatch.setenv("DEAPI_REDIS_HOST", "172.16.12.9")
+    monkeypatch.setenv("DEAPI_REDIS_HOST", "redis.example.com")
     monkeypatch.setenv("DEAPI_REDIS_SCHEME", "tls")
     monkeypatch.setenv("DEAPI_REDIS_CA_FILE", "/etc/redis-ca/ca.pem")
-    monkeypatch.setenv("DEAPI_REDIS_USERNAME", "deapi-rc-redis")
+    monkeypatch.setenv("DEAPI_REDIS_USERNAME", "mcp-app")
     s = Settings(_env_file=None)
     assert (s.redis_host, s.redis_scheme, s.redis_username) == (
-        "172.16.12.9",
+        "redis.example.com",
         "tls",
-        "deapi-rc-redis",
+        "mcp-app",
     )
 
 
