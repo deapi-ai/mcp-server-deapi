@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   mcp-server-deapi:
     build: .
@@ -9,11 +7,15 @@ services:
     environment:
       - MCP_HOST=0.0.0.0
       - MCP_PORT=8000
+      # Required off loopback: OAuth tokens are signed with it. Set it in the shell or .env.
+      - DEAPI_JWT_SECRET_KEY=${DEAPI_JWT_SECRET_KEY:?set DEAPI_JWT_SECRET_KEY}
       # Optional: Override deAPI configuration
       # - DEAPI_API_BASE_URL=https://api.deapi.ai
       # - DEAPI_HTTP_TIMEOUT=30.0
       # - DEAPI_MAX_RETRIES=3
     restart: unless-stopped
+    # Let in-flight tool calls finish on shutdown (MCP_GRACEFUL_SHUTDOWN_SECONDS is 930)
+    stop_grace_period: 960s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

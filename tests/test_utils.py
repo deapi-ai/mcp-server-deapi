@@ -2,23 +2,19 @@
 
 import base64
 import io
-import pytest
 from unittest.mock import AsyncMock, patch
 
-from src.utils import (
+import pytest
+
+from deapi_mcp.utils import (
+    fetch_audio_from_url,
+    fetch_video_from_url,
+    is_url,
     parse_audio_input,
     prepare_audio_upload,
     prepare_audio_upload_async,
-    parse_video_input,
-    prepare_video_upload,
     prepare_video_upload_async,
-    fetch_audio_from_url,
-    fetch_video_from_url,
-    parse_image_input,
-    prepare_image_upload_async,
-    is_url,
 )
-
 
 # =============================================================================
 # parse_audio_input tests
@@ -177,17 +173,9 @@ class TestPrepareAudioUploadAsync:
     async def test_url_input(self):
         fake_content = b"fake-audio-from-url"
 
-        mock_response = AsyncMock()
-        mock_response.content = fake_content
-        mock_response.headers = {"content-type": "audio/wav"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch", AsyncMock(return_value=(fake_content, "audio/wav"))
+        ):
             field_name, (filename, file_obj, mime_type) = await prepare_audio_upload_async(
                 "https://example.com/audio.wav", "audio"
             )
@@ -206,17 +194,9 @@ class TestPrepareAudioUploadAsync:
 class TestFetchAudioFromUrl:
     @pytest.mark.asyncio
     async def test_mp3_content_type(self):
-        mock_response = AsyncMock()
-        mock_response.content = b"mp3-data"
-        mock_response.headers = {"content-type": "audio/mpeg"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch", AsyncMock(return_value=(b"mp3-data", "audio/mpeg"))
+        ):
             content, filename = await fetch_audio_from_url("https://example.com/file.mp3")
 
         assert content == b"mp3-data"
@@ -224,17 +204,10 @@ class TestFetchAudioFromUrl:
 
     @pytest.mark.asyncio
     async def test_flac_from_url_extension(self):
-        mock_response = AsyncMock()
-        mock_response.content = b"flac-data"
-        mock_response.headers = {"content-type": "application/octet-stream"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch",
+            AsyncMock(return_value=(b"flac-data", "application/octet-stream")),
+        ):
             _, filename = await fetch_audio_from_url("https://example.com/music.flac")
 
         assert filename == "audio.flac"
@@ -263,17 +236,9 @@ class TestPrepareVideoUploadAsync:
     async def test_url_input(self):
         fake_content = b"fake-video-from-url"
 
-        mock_response = AsyncMock()
-        mock_response.content = fake_content
-        mock_response.headers = {"content-type": "video/mp4"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch", AsyncMock(return_value=(fake_content, "video/mp4"))
+        ):
             field_name, (filename, file_obj, mime_type) = await prepare_video_upload_async(
                 "https://example.com/video.mp4", "video"
             )
@@ -310,17 +275,9 @@ class TestPrepareVideoUploadAsync:
 class TestFetchVideoFromUrl:
     @pytest.mark.asyncio
     async def test_mp4_content_type(self):
-        mock_response = AsyncMock()
-        mock_response.content = b"mp4-data"
-        mock_response.headers = {"content-type": "video/mp4"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch", AsyncMock(return_value=(b"mp4-data", "video/mp4"))
+        ):
             content, filename = await fetch_video_from_url("https://example.com/video.mp4")
 
         assert content == b"mp4-data"
@@ -328,34 +285,19 @@ class TestFetchVideoFromUrl:
 
     @pytest.mark.asyncio
     async def test_webm_from_content_type(self):
-        mock_response = AsyncMock()
-        mock_response.content = b"webm-data"
-        mock_response.headers = {"content-type": "video/webm"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch", AsyncMock(return_value=(b"webm-data", "video/webm"))
+        ):
             _, filename = await fetch_video_from_url("https://example.com/file")
 
         assert filename == "video.webm"
 
     @pytest.mark.asyncio
     async def test_fallback_to_url_extension(self):
-        mock_response = AsyncMock()
-        mock_response.content = b"avi-data"
-        mock_response.headers = {"content-type": "application/octet-stream"}
-        mock_response.raise_for_status = lambda: None
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("src.utils.httpx.AsyncClient", return_value=mock_client):
+        with patch(
+            "deapi_mcp.utils.safe_fetch",
+            AsyncMock(return_value=(b"avi-data", "application/octet-stream")),
+        ):
             _, filename = await fetch_video_from_url("https://example.com/clip.avi")
 
         assert filename == "video.avi"
@@ -364,6 +306,47 @@ class TestFetchVideoFromUrl:
 # =============================================================================
 # is_url edge cases
 # =============================================================================
+
+
+class TestNoAttachmentPromise:
+    """DEV-2075 bug 2: an attachment in the chat client never reaches a tool
+    argument, so no description may claim it does, and the sync parsers must
+    not answer a URL with "not yet supported" when the async path handles it."""
+
+    def test_no_tool_description_mentions_attachments(self):
+        import inspect
+
+        from deapi_mcp.tools import audio, embedding, image, prompt, utility, video
+
+        offenders = []
+        for module in (audio, embedding, image, prompt, utility, video):
+            for name, fn in inspect.getmembers(module, inspect.iscoroutinefunction):
+                if fn.__module__ != module.__name__:
+                    continue
+                if "attach" in (fn.__doc__ or "").lower():
+                    offenders.append(name)
+        assert not offenders, f"descriptions still mention attachments: {offenders}"
+
+    def test_image_parser_names_the_async_path_for_urls(self):
+        from deapi_mcp.utils import parse_image_input
+
+        with pytest.raises(ValueError, match="prepare_image_upload_async") as exc:
+            parse_image_input("https://example.com/a.png")
+        assert "not yet supported" not in str(exc.value)
+
+    def test_video_parser_names_the_async_path_for_urls(self):
+        from deapi_mcp.utils import parse_video_input
+
+        with pytest.raises(ValueError, match="prepare_video_upload_async") as exc:
+            parse_video_input("https://example.com/a.mp4")
+        assert "not yet supported" not in str(exc.value)
+
+    def test_not_yet_supported_is_gone_from_utils(self):
+        from pathlib import Path
+
+        import deapi_mcp.utils
+
+        assert "not yet supported" not in Path(deapi_mcp.utils.__file__).read_text()
 
 
 class TestIsUrl:

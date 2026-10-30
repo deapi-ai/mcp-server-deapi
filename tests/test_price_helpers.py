@@ -1,15 +1,13 @@
 """Tests for price calculation payload helpers."""
 
-from unittest.mock import patch
-
-from src.middleware import _cache
-from src.schemas import ModelInfo
-from src.tools._price_helpers import (
+from deapi_mcp.middleware import _cache
+from deapi_mcp.schemas import ModelInfo
+from deapi_mcp.tools._price_helpers import (
+    _to_number,
     get_model_defaults,
     get_model_features,
-    get_model_limits,
+    resolve_from_card,
     resolve_generation_params,
-    _to_number,
 )
 
 
@@ -27,7 +25,7 @@ def _reset_cache():
     _cache.models_by_slug.clear()
     _cache.tool_models.clear()
     _cache.enrichments.clear()
-    _cache.last_fetched = 0.0
+    _cache.last_fetched = None
 
 
 class TestToNumber:
@@ -55,9 +53,12 @@ class TestGetModelDefaults:
         _reset_cache()
 
     def test_returns_defaults(self):
-        model = _make_model("Flux1schnell", info={
-            "defaults": {"steps": 4, "width": 768, "height": 768},
-        })
+        model = _make_model(
+            "Flux1schnell",
+            info={
+                "defaults": {"steps": 4, "width": 768, "height": 768},
+            },
+        )
         _cache.models_by_slug["Flux1schnell"] = model
         result = get_model_defaults("Flux1schnell")
         assert result == {"steps": 4, "width": 768, "height": 768}
@@ -84,9 +85,12 @@ class TestGetModelFeatures:
         _reset_cache()
 
     def test_returns_features(self):
-        model = _make_model("Flux1schnell", info={
-            "features": {"supports_guidance": "0", "supports_steps": "1"},
-        })
+        model = _make_model(
+            "Flux1schnell",
+            info={
+                "features": {"supports_guidance": "0", "supports_steps": "1"},
+            },
+        )
         _cache.models_by_slug["Flux1schnell"] = model
         result = get_model_features("Flux1schnell")
         assert result["supports_guidance"] == "0"
@@ -112,11 +116,17 @@ class TestResolveGenerationParams:
         _cache.models_by_slug[slug] = model
 
     def test_uses_model_defaults(self):
-        self._setup_model(defaults={
-            "steps": 4, "width": 768, "height": 768, "guidance": 0,
-        }, features={
-            "supports_guidance": "0",
-        })
+        self._setup_model(
+            defaults={
+                "steps": 4,
+                "width": 768,
+                "height": 768,
+                "guidance": 0,
+            },
+            features={
+                "supports_guidance": "0",
+            },
+        )
         result = resolve_generation_params("TestModel", {})
         assert result["width"] == 768
         assert result["height"] == 768
@@ -125,35 +135,53 @@ class TestResolveGenerationParams:
         assert result["seed"] == -1  # always defaults to -1
 
     def test_user_overrides_defaults(self):
-        self._setup_model(defaults={
-            "steps": 4, "width": 768, "height": 768,
-        })
-        result = resolve_generation_params("TestModel", {
-            "width": 512, "height": 512, "steps": 10,
-        })
+        self._setup_model(
+            defaults={
+                "steps": 4,
+                "width": 768,
+                "height": 768,
+            }
+        )
+        result = resolve_generation_params(
+            "TestModel",
+            {
+                "width": 512,
+                "height": 512,
+                "steps": 10,
+            },
+        )
         assert result["width"] == 512
         assert result["height"] == 512
         assert result["steps"] == 10
 
     def test_guidance_disabled(self):
-        self._setup_model(defaults={"guidance": "0"}, features={
-            "supports_guidance": "0",
-        })
+        self._setup_model(
+            defaults={"guidance": "0"},
+            features={
+                "supports_guidance": "0",
+            },
+        )
         result = resolve_generation_params("TestModel", {"guidance": 7.5})
         # Should ignore user value and use model default when supports_guidance=0
         assert result["guidance"] == 0
 
     def test_guidance_enabled(self):
-        self._setup_model(defaults={"guidance": "7.5"}, features={
-            "supports_guidance": "1",
-        })
+        self._setup_model(
+            defaults={"guidance": "7.5"},
+            features={
+                "supports_guidance": "1",
+            },
+        )
         result = resolve_generation_params("TestModel", {})
         assert result["guidance"] == 7.5
 
     def test_guidance_enabled_with_user_override(self):
-        self._setup_model(defaults={"guidance": "7.5"}, features={
-            "supports_guidance": "1",
-        })
+        self._setup_model(
+            defaults={"guidance": "7.5"},
+            features={
+                "supports_guidance": "1",
+            },
+        )
         result = resolve_generation_params("TestModel", {"guidance": 3.0})
         assert result["guidance"] == 3.0
 
@@ -167,9 +195,13 @@ class TestResolveGenerationParams:
         assert result["guidance"] == 0
 
     def test_cache_miss_with_user_params(self):
-        result = resolve_generation_params("NonExistent", {
-            "width": 512, "height": 512,
-        })
+        result = resolve_generation_params(
+            "NonExistent",
+            {
+                "width": 512,
+                "height": 512,
+            },
+        )
         assert result["width"] == 512
         assert result["height"] == 512
         assert result["seed"] == -1
@@ -180,17 +212,24 @@ class TestResolveGenerationParams:
         assert result["seed"] == 42
 
     def test_fps_and_frames(self):
-        self._setup_model(defaults={
-            "fps": 30, "frames": 120,
-        })
+        self._setup_model(
+            defaults={
+                "fps": 30,
+                "frames": 120,
+            }
+        )
         result = resolve_generation_params("TestModel", {})
         assert result["fps"] == 30
         assert result["frames"] == 120
 
     def test_string_defaults_converted_to_numbers(self):
-        self._setup_model(defaults={
-            "steps": "4", "width": "768", "height": "768",
-        })
+        self._setup_model(
+            defaults={
+                "steps": "4",
+                "width": "768",
+                "height": "768",
+            }
+        )
         result = resolve_generation_params("TestModel", {})
         assert result["steps"] == 4
         assert result["width"] == 768
@@ -199,8 +238,42 @@ class TestResolveGenerationParams:
     def test_none_user_params_ignored(self):
         """None values in user_params should not override defaults."""
         self._setup_model(defaults={"steps": 4, "width": 768})
-        result = resolve_generation_params("TestModel", {
-            "steps": None, "width": 512,
-        })
+        result = resolve_generation_params(
+            "TestModel",
+            {
+                "steps": None,
+                "width": 512,
+            },
+        )
         assert result["steps"] == 4  # None → falls back to default
         assert result["width"] == 512  # Non-None → used
+
+
+class TestResolveFromCard:
+    """Generation payloads: user value, else the card's default, else nothing."""
+
+    def setup_method(self):
+        _reset_cache()
+        _cache.models_by_slug["Flux1schnell"] = _make_model(
+            "Flux1schnell",
+            info={"defaults": {"steps": "4", "width": 768, "height": 768}},
+        )
+
+    def teardown_method(self):
+        _reset_cache()
+
+    def test_user_value_wins(self):
+        assert resolve_from_card("Flux1schnell", {"steps": 8})["steps"] == 8
+
+    def test_card_fills_unset(self):
+        result = resolve_from_card("Flux1schnell", {"steps": None, "width": None})
+        assert result == {"steps": 4, "width": 768}
+        assert isinstance(result["steps"], int), "card defaults arrive as strings"
+
+    def test_key_without_user_or_card_value_is_omitted(self):
+        """Nothing is invented: the API says what the model needs, not this client."""
+        result = resolve_from_card("Flux1schnell", {"steps": None, "guidance": None, "fps": None})
+        assert result == {"steps": 4}
+
+    def test_unknown_model_sends_only_what_the_user_gave(self):
+        assert resolve_from_card("NoSuchModel", {"steps": None, "width": 512}) == {"width": 512}

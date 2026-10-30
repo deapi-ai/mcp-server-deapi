@@ -11,15 +11,13 @@ RUN apt-get update && \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Copy project metadata and the package (the package must be present to build the wheel)
 COPY pyproject.toml README.md ./
+COPY deapi_mcp/ ./deapi_mcp/
 
-# Install Python dependencies
+# Install the package and its dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir .
-
-# Copy source code
-COPY src/ ./src/
 
 # Create non-root user
 RUN useradd -m -u 1000 mcp && \
@@ -37,4 +35,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-CMD ["python", "-m", "src.server_remote"]
+CMD ["python", "-m", "deapi_mcp.server_remote"]
