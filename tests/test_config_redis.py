@@ -111,3 +111,51 @@ def test_build_redis_client_db_override():
     assert kwargs["socket_timeout"] == 0.5
     default = build_redis_client(s).connection_pool.connection_kwargs
     assert (default["db"], default["socket_timeout"]) == (11, 2)
+
+
+_BLANK_ENV = (
+    "DEAPI_REDIS_HOST",
+    "DEAPI_REDIS_PORT",
+    "DEAPI_REDIS_USERNAME",
+    "DEAPI_REDIS_PASSWORD",
+    "DEAPI_REDIS_DB",
+    "DEAPI_REDIS_SCHEME",
+    "DEAPI_REDIS_CA_FILE",
+    "DEAPI_REDIS_PREFIX",
+    "DEAPI_REDIS_REQUIRED",
+    "DEAPI_API_VERSION",
+    "DEAPI_WEBHOOKS_INTERNAL",
+    "DEAPI_METRICS_TOKEN",
+    "DEAPI_METRICS_REDIS_DB",
+)
+
+
+def _assert_defaults(s: Settings) -> None:
+    assert (s.redis_host, s.redis_port, s.redis_db, s.redis_scheme) == (None, 6379, 11, "plain")
+    assert (s.redis_username, s.redis_password, s.redis_ca_file) == (None, None, None)
+    assert (s.redis_prefix, s.redis_required) == ("deapi_mcp_database_", False)
+    assert (s.deapi_api_version, s.webhooks_internal) == ("v2", False)
+    assert (s.metrics_token, s.metrics_redis_db) == (None, 12)
+
+
+def test_blank_env_values_mean_the_default(monkeypatch):
+    # A secrets env or a pasted example often carries `NAME=` with no value; that
+    # must start the server on the defaults, not fail on an unparsable "".
+    for name in _BLANK_ENV:
+        monkeypatch.setenv(name, "")
+    _assert_defaults(Settings(_env_file=None))
+
+
+def test_blank_values_in_env_file_mean_the_default(monkeypatch, tmp_path):
+    for name in _BLANK_ENV:
+        monkeypatch.delenv(name, raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("".join(f"{name}=\n" for name in _BLANK_ENV), encoding="utf-8")
+    _assert_defaults(Settings(_env_file=env_file))
+
+
+def test_blank_value_does_not_mask_a_real_one(monkeypatch):
+    monkeypatch.setenv("DEAPI_REDIS_PORT", "6380")
+    monkeypatch.setenv("DEAPI_REDIS_DB", "")
+    s = Settings(_env_file=None)
+    assert (s.redis_port, s.redis_db) == (6380, 11)

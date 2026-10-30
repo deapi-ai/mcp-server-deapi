@@ -485,7 +485,7 @@ wheels = [
 
 [[package]]
 name = "deapi-mcp"
-version = "0.5.0"
+version = "0.5.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -516,7 +516,7 @@ dev = [
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
-    { name = "deapi-sdk", url = "https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.1.tar.gz" },
+    { name = "deapi-sdk", url = "https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.2.tar.gz" },
     { name = "fakeredis", extras = ["lua"], marker = "extra == 'dev'", specifier = ">=2.26" },
     { name = "fastmcp", specifier = ">=4.0.4,<5" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -537,13 +537,13 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "deapi-sdk"
-version = "0.5.1"
-source = { url = "https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.1.tar.gz" }
+version = "0.5.2"
+source = { url = "https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.2.tar.gz" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { hash = "sha256:1b20d0ac3b1e1555afbeadc855fc7c0fe1932a73d5e1888b7fedd4a24d7f72ff" }
+sdist = { hash = "sha256:62ea5dc4012fdb15a4632f09c21c853adeb721cca32ace7b8a3923b0e2de2cf0" }
 
 [package.metadata]
 requires-dist = [

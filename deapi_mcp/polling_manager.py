@@ -9,7 +9,7 @@ from fastmcp import Context
 
 from .config import PollingConfig, settings
 from .deapi_client import DeapiAPIError, DeapiClient
-from .observability import note_job_failure
+from .observability import forget_api_error, note_job_failure
 from .schemas import JobStatus, JobStatusResponse, ToolResult
 from .webhooks import registry
 
@@ -284,6 +284,9 @@ class PollingManager:
 
                 # For other errors, retry with delay
                 if attempt < 3:  # Retry a few times for transient errors
+                    # Retried, so this error does not end the call; a later attempt
+                    # that also fails notes its own.
+                    forget_api_error()
                     logger.info("Retrying job %s status (attempt %d/3)", job_id, attempt + 1)
                     await asyncio.sleep(current_delay)
                     current_delay = self._calculate_next_delay(current_delay, attempt)

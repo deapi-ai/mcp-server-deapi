@@ -154,3 +154,105 @@ async def test_check_job_status_failed_notes_reason(call):
     assert result["success"] is False
     assert call.job_error_reason == "INPUT_TOO_LARGE"
     assert call.job_failed is True
+
+
+# --- The note that ended the call decides, not the first kind in a fixed list ---
+
+
+def test_tolerated_api_error_then_input_error_is_invalid_input(call):
+    # An API error the call survives (caught and carried on), then the caller's own
+    # input is refused: the input error is what ended the call.
+    try:
+        raise DeapiAPIError("catalogue down", 500, None)
+    except DeapiAPIError:
+        pass
+    with pytest.raises(ValueError):
+        parse_image_input("not base64!")
+    assert classify({"success": False, "error": "bad"}, call, None) == "invalid_input"
+
+
+def test_api_error_after_input_error_is_the_api_label(call):
+    with pytest.raises(ValueError):
+        parse_image_input("not base64!")
+    DeapiAPIError("x", 401, None)
+    assert classify({"success": False}, call, None) == "bad_key"
+
+
+def test_job_failure_after_tolerated_api_error_is_the_job_label(call):
+    DeapiAPIError("x", 500, None)
+    from deapi_mcp.observability import note_job_failure
+
+    note_job_failure("SOURCE_PRIVATE")
+    assert classify({"success": False}, call, None) == "job_rejected"
+
+
+def test_single_notes_classify_as_before(call):
+    DeapiAPIError("x", 422, {"code": "insufficient_balance"})
+    assert classify({"success": False}, call, None) == "no_balance"
+
+
+def test_errors_tolerated_discards_only_its_own_notes(call):
+    from deapi_mcp.observability import errors_tolerated
+
+    with pytest.raises(ValueError):
+        parse_image_input("not base64!")
+    with errors_tolerated():
+        DeapiAPIError("x", 500, None)
+    assert (call.api_status, call.api_seq) == (None, 0)
+    assert call.input_error is True
+    assert classify({"success": False}, call, None) == "invalid_input"
+    # Notes after the block still order after everything before it.
+    DeapiAPIError("x", 429, None)
+    assert classify({"success": False}, call, None) == "rate_limited"
+
+
+async def test_failed_catalogue_fetch_does_not_label_the_call(call):
+    from deapi_mcp.auth import current_deapi_token
+    from deapi_mcp.middleware import _caches, ensure_model_cache
+
+    client = AsyncMock()
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+
+    async def get_models():
+        # Built during the fetch, as the client does, so the note lands in the block.
+        raise DeapiAPIError("down", 503, None)
+
+    client.get_models = AsyncMock(side_effect=get_models)
+
+    _caches.clear()
+    reset = current_deapi_token.set("token-observability-0123")
+    try:
+        with patch("deapi_mcp.deapi_client.get_client", return_value=client):
+            await ensure_model_cache()
+    finally:
+        current_deapi_token.reset(reset)
+        _caches.clear()
+
+    assert client.get_models.await_count == 1
+    assert call.api_status is None
+    # A job that then completes with neither result nor result_url is still our defect.
+    assert classify({"success": False, "error": "empty"}, call, None) == "internal_error"
+
+
+async def test_retried_status_error_does_not_label_the_call(call):
+    client = AsyncMock()
+    client.get_job_status = AsyncMock(
+        side_effect=[
+            DeapiAPIError("blip", 502, None),
+            JobStatusResponse(data=JobStatusData(status="done")),
+        ]
+    )
+    with patch("deapi_mcp.polling_manager.asyncio.sleep", AsyncMock()):
+        result = await PollingManager(client, "image").poll_until_complete("job-1")
+    assert result.success is True
+    assert call.api_status is None
+    assert classify({"success": False}, call, None) == "internal_error"
+
+
+async def test_status_error_that_ends_polling_still_labels_the_call(call):
+    client = AsyncMock()
+    client.get_job_status = AsyncMock(side_effect=DeapiAPIError("gone", 404, None))
+    result = await PollingManager(client, "image").poll_until_complete("job-1")
+    assert result.success is False
+    assert classify({"success": False}, call, None) == "invalid_input"
