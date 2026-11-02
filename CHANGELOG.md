@@ -10,6 +10,10 @@ releases are git tags `vX.Y.Z`.
 - `py.typed`: type checkers now use the package's annotations.
 - `CHANGELOG.md` and `SECURITY.md` (how to report a vulnerability privately).
 
+### Changed
+- Default Redis databases are now `0` for OAuth codes (`DEAPI_REDIS_DB`) and `1` for a metrics
+  overlay (`DEAPI_METRICS_REDIS_DB`). If you relied on the previous defaults, set both explicitly.
+
 ### Removed
 - The `DEAPI_RETRY_BACKOFF_FACTOR` setting. Nothing read it since retries moved to the deAPI SDK.
   An existing value is ignored.

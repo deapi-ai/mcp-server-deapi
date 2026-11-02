@@ -312,7 +312,7 @@ DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 # DEAPI_REDIS_HOST=redis.example.com
 DEAPI_REDIS_PORT=6379
 # DEAPI_REDIS_PASSWORD=
-DEAPI_REDIS_DB=11
+DEAPI_REDIS_DB=0
 # Connection scheme: plain | tls (tls needs DEAPI_REDIS_CA_FILE)
 DEAPI_REDIS_SCHEME=plain
 # true = refuse to start without a Redis host

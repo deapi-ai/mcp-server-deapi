@@ -119,7 +119,7 @@ DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 
 # OAuth authorization code store. Unset host = in-memory store, single replica only.
 # DEAPI_REDIS_HOST=redis.example.com
-DEAPI_REDIS_DB=11
+DEAPI_REDIS_DB=0
 DEAPI_REDIS_PREFIX=deapi_mcp_database_
 DEAPI_REDIS_REQUIRED=false
 

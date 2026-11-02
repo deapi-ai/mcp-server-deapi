@@ -259,9 +259,9 @@ def tls_settings(monkeypatch):
         redis_port=6380,
         redis_username="app",
         redis_password=None,
-        redis_db=11,
+        redis_db=3,
         redis_scheme="tls",
-        redis_ca_file="/etc/redis-ca/ca.pem",
+        redis_ca_file="/certs/redis-ca.pem",
         redis_prefix=PREFIX,
     )
     for name, value in values.items():
@@ -278,7 +278,7 @@ def test_build_redis_client_sets_short_timeouts(tls_settings):
     client = build_redis_client(tls_settings)
     kw = client.connection_pool.connection_kwargs
     assert kw["socket_timeout"] == 2 and kw["socket_connect_timeout"] == 2
-    assert kw["db"] == 11 and kw["ssl_ca_certs"] == "/etc/redis-ca/ca.pem"
+    assert kw["db"] == 3 and kw["ssl_ca_certs"] == "/certs/redis-ca.pem"
     assert kw["ssl_cert_reqs"] == "required"
     assert kw["ssl_check_hostname"] is True
     assert client.get_retry() == Retry(NoBackoff(), 1)
@@ -297,7 +297,7 @@ async def test_unreachable_redis_fails_fast():
         redis_port=port,
         redis_username=None,
         redis_password=None,
-        redis_db=11,
+        redis_db=3,
         redis_scheme="plain",
         redis_ca_file=None,
     )
@@ -325,7 +325,7 @@ def test_build_redis_client_unwraps_secret_password():
         redis_port=6379,
         redis_username=None,
         redis_password=SecretStr("pw"),
-        redis_db=11,
+        redis_db=3,
         redis_scheme="plain",
         redis_ca_file=None,
     )
@@ -349,6 +349,6 @@ def test_store_with_host_is_redis_and_never_pings(caplog, tls_settings, monkeypa
     reset_auth_code_store()
     try:
         assert isinstance(get_auth_code_store(), RedisAuthCodeStore)
-        assert "OAuth code store: Redis 10.0.0.5:6380 db=11" in caplog.text
+        assert "OAuth code store: Redis 10.0.0.5:6380 db=3" in caplog.text
     finally:
         reset_auth_code_store()

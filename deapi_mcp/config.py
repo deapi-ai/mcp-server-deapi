@@ -142,7 +142,7 @@ class Settings(BaseSettings):
         repr=False,
         description="Redis password. A SecretStr so it never reaches a repr or an error message",
     )
-    redis_db: int = Field(default=11, description="Redis logical database number")
+    redis_db: int = Field(default=0, description="Redis logical database number")
     redis_scheme: Literal["plain", "tls"] = Field(
         default="plain", description="Connection scheme: plain TCP or TLS"
     )
@@ -167,7 +167,7 @@ class Settings(BaseSettings):
         repr=False,
         description="Bearer token Prometheus presents to /metrics. Unset disables the endpoint",
     )
-    metrics_redis_db: int = Field(default=12, description="Redis logical database for metrics")
+    metrics_redis_db: int = Field(default=1, description="Redis logical database for metrics")
     metrics_prefix: str = Field(
         default="deapi_mcp_metrics_",
         description="Prefix prepended to every metrics key",
