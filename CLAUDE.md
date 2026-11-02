@@ -115,7 +115,7 @@ DEAPI_WEBHOOKS_INTERNAL=false
 # DEAPI_WEBHOOK_RECEIVER_URL=https://mcp.example.com/webhooks/deapi
 # Secret the API signs callbacks with: 32-255 characters
 # DEAPI_WEBHOOK_SECRET=
-DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
+DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=15.0
 
 # OAuth authorization code store. Unset host = in-memory store, single replica only.
 # DEAPI_REDIS_HOST=redis.example.com
