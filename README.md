@@ -329,7 +329,7 @@ MCP_GRACEFUL_SHUTDOWN_SECONDS=930
 # FORWARDED_ALLOW_IPS=*
 ```
 
-With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally.
+With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally. A replayed delivery (same `delivery_id`) wakes nobody twice. The job registry is in process memory by default; with several replicas, see [DEPLOYMENT.md](DEPLOYMENT.md#running-more-than-one-replica).
 
 ## Development
 
@@ -425,7 +425,11 @@ As with the stock server, set `DEAPI_JWT_SECRET_KEY` first: without it the app r
 on a non-local host.
 
 `metrics` is an optional overlay that instruments tool calls and OAuth and mounts its own
-routes; the stock server (`build_app()`) passes none. Recorders for per-call outcomes and
+routes; the stock server (`build_app()`) passes none. `job_registry` replaces the in-process
+registry that completion webhooks wake waiting tools through, for a deployment whose replicas
+share one receiver URL: implement `deapi_mcp.webhooks.JobRegistry` (or subclass
+`JobCompletionRegistry`, relay `signal` to the other replicas and call `wake` where it arrives).
+Its `start`/`stop` run with the app's lifespan. Recorders for per-call outcomes and
 rejected logins plug in through `deapi_mcp.observability`. Settings an overlay can use
 (`DEAPI_METRICS_TOKEN`, `DEAPI_METRICS_REDIS_DB`, `DEAPI_METRICS_PREFIX`) are already defined
 in `deapi_mcp.config`; the core itself never reads them.

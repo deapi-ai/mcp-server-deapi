@@ -3,6 +3,23 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.6.0
+
+### Added
+- Pluggable job registry for completion webhooks: `create_app(server, job_registry=...)` takes any
+  implementation of `deapi_mcp.webhooks.JobRegistry`, so replicas that share one receiver URL can
+  relay callbacks to each other. Its `start`/`stop` run with the app's lifespan while webhooks
+  are on. The default stays in process memory.
+- Webhook deliveries are deduplicated on `delivery_id`: a replayed delivery is acknowledged and
+  wakes nobody.
+
+### Changed
+- `JobCompletionRegistry.signal` is a coroutine; the synchronous local wake-up is `wake`.
+- The module-level `deapi_mcp.webhooks.registry` is gone: use `get_job_registry()` /
+  `set_job_registry()`.
+- The receiver answers `400` when `job_request_id` is not a non-empty string. A registry failure
+  is logged and the callback acknowledged; the job completes on the fallback poll.
+
 ## 0.5.2
 
 ### Added

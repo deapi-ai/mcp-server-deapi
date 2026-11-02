@@ -24,10 +24,16 @@ Contract, from the deAPI webhook delivery scheme:
 
 Any 2xx counts as delivered; anything else is retried up to 10 times.
 
-Known limitation: the job registry is in-process. With more than one replica a
-callback can land on a pod that is not waiting for it, in which case that job
-falls back to the safety-net poll. The upgrade path is a shared pub/sub
-(e.g. Redis) behind the same JobCompletionRegistry interface.
+The job registry is pluggable. The default, ``JobCompletionRegistry``, lives in
+process memory: with more than one replica a callback can land on a replica
+that is not waiting for it, and that job then completes on the safety-net poll.
+A deployment with several replicas passes a shared implementation of
+``JobRegistry`` to ``create_app(server, job_registry=...)``, for example one that
+relays signals over a pub/sub channel.
+
+Deliveries are deduplicated on ``delivery_id``: a signature stays valid for the
+whole timestamp tolerance window, so the same delivery can arrive again. Only
+the first terminal delivery wakes the waiter.
 """
 
 import asyncio
@@ -36,7 +42,8 @@ import hmac
 import json
 import logging
 import time
-from typing import Dict, Optional
+from collections import OrderedDict
+from typing import Dict, Optional, Protocol
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -61,19 +68,64 @@ REGISTRY_ENTRY_TTL = 3600.0
 MAX_BODY_BYTES = 64 * 1024
 
 
+# Upper bound on remembered delivery ids in the in-process registry. Reached only
+# under a flood of distinct signed deliveries; the oldest ids are dropped first.
+MAX_REMEMBERED_DELIVERIES = 10_000
+
+
+class JobRegistry(Protocol):
+    """What the client, the poller and the receiver need from a job registry.
+
+    ``track``, ``is_tracked`` and ``forget`` run on the replica that submitted the
+    job and waits for it. ``signal`` runs on the replica that received the
+    callback, which may be another one: a shared implementation relays it to
+    every replica and sets ``track``'s event there. ``claim_delivery`` returns
+    True the first time it sees a delivery id and False afterwards.
+
+    ``start`` and ``stop`` run with the app's lifespan while webhooks are on, so an
+    implementation can open and close its connections there.
+    """
+
+    def track(self, job_id: str) -> asyncio.Event: ...
+
+    def is_tracked(self, job_id: str) -> bool: ...
+
+    def forget(self, job_id: str) -> None: ...
+
+    async def signal(self, job_id: str) -> None: ...
+
+    async def claim_delivery(self, delivery_id: str) -> bool: ...
+
+    async def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+
 class JobCompletionRegistry:
-    """Maps job ids to events that a waiting tool can block on.
+    """The default ``JobRegistry``: job ids mapped to events, in process memory.
 
     Order-independent by design: the callback can arrive before the submitting
     tool has learned its job id (the API assigns it in the submit response, and
-    a fast job could finish in the gap). Both `track` and `signal` therefore
+    a fast job could finish in the gap). Both `track` and `wake` therefore
     create the entry if it is missing, and a signal that arrives first is not
     lost — the later `track` finds the event already set.
+
+    A shared implementation can subclass it, keep the local events, relay
+    ``signal`` to other replicas, and call ``wake`` where the relay arrives.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        delivery_ttl: Optional[float] = None,
+        max_deliveries: int = MAX_REMEMBERED_DELIVERIES,
+    ) -> None:
         self._events: Dict[str, asyncio.Event] = {}
         self._touched: Dict[str, float] = {}
+        # delivery id -> monotonic expiry, oldest first
+        self._deliveries: "OrderedDict[str, float]" = OrderedDict()
+        self._delivery_ttl = delivery_ttl
+        self._max_deliveries = max_deliveries
 
     def track(self, job_id: str) -> asyncio.Event:
         """Register interest in a job and return the event to wait on."""
@@ -82,12 +134,45 @@ class JobCompletionRegistry:
         self._touched[job_id] = time.monotonic()
         return event
 
-    def signal(self, job_id: str) -> None:
-        """Mark a job as finished, waking any waiter."""
+    def wake(self, job_id: str) -> None:
+        """Mark a job as finished in this process, waking any local waiter."""
         self._sweep()
         event = self._events.setdefault(job_id, asyncio.Event())
         self._touched[job_id] = time.monotonic()
         event.set()
+
+    async def signal(self, job_id: str) -> None:
+        """Mark a job as finished. In process memory this is ``wake``."""
+        self.wake(job_id)
+
+    async def claim_delivery(self, delivery_id: str) -> bool:
+        """True the first time a delivery id is seen within the dedupe window.
+
+        The window defaults to twice the signature tolerance: a replay older than
+        the tolerance already fails the signature check, and twice covers clock
+        skew in either direction.
+        """
+        now = time.monotonic()
+        ttl = self._delivery_ttl
+        if ttl is None:
+            ttl = 2 * settings.webhook_timestamp_tolerance
+        while self._deliveries:
+            expires = next(iter(self._deliveries.values()))
+            if expires > now:
+                break
+            self._deliveries.popitem(last=False)
+        if delivery_id in self._deliveries:
+            return False
+        self._deliveries[delivery_id] = now + ttl
+        while len(self._deliveries) > self._max_deliveries:
+            self._deliveries.popitem(last=False)
+        return True
+
+    async def start(self) -> None:
+        """Nothing to open in process memory."""
+
+    async def stop(self) -> None:
+        """Nothing to close in process memory."""
 
     def is_tracked(self, job_id: str) -> bool:
         return job_id in self._events
@@ -104,7 +189,18 @@ class JobCompletionRegistry:
             self.forget(job_id)
 
 
-registry = JobCompletionRegistry()
+_job_registry: JobRegistry = JobCompletionRegistry()
+
+
+def get_job_registry() -> JobRegistry:
+    """The registry the client, the poller and the receiver use."""
+    return _job_registry
+
+
+def set_job_registry(job_registry: JobRegistry) -> None:
+    """Replace the registry. ``create_app(job_registry=...)`` calls this at startup."""
+    global _job_registry
+    _job_registry = job_registry
 
 
 def internal_webhooks_enabled() -> bool:
@@ -215,13 +311,39 @@ async def webhook_receiver(request: Request) -> JSONResponse:
         payload = json.loads(raw_body)
         event = payload.get("event") or request.headers.get("X-DeAPI-Event")
         job_id = payload["data"]["job_request_id"]
+        delivery_id = payload.get("delivery_id") or request.headers.get("X-DeAPI-Delivery-Id")
     except (ValueError, KeyError, TypeError, AttributeError):
         return JSONResponse({"error": "malformed payload"}, status_code=400)
+    if not isinstance(job_id, str) or not job_id:
+        return JSONResponse({"error": "malformed payload"}, status_code=400)
 
-    if event in TERMINAL_EVENTS:
-        registry.signal(job_id)
-        logger.debug("Webhook %s for job %s: waiter signalled", event, job_id)
-    else:
+    if event not in TERMINAL_EVENTS:
         logger.debug("Webhook %s for job %s: not terminal, ignored", event, job_id)
+        return JSONResponse({"received": True})
+
+    # The callback only wakes a waiter, which then reads the job status itself. A registry
+    # failure is therefore logged and acknowledged: the job completes on the fallback poll,
+    # and a retry from the API would not fix the registry.
+    job_registry = get_job_registry()
+    if isinstance(delivery_id, str) and delivery_id:
+        try:
+            first = await job_registry.claim_delivery(delivery_id)
+        except Exception:
+            logger.warning(
+                "Could not check webhook delivery %s for reuse", delivery_id, exc_info=True
+            )
+            first = True
+        if not first:
+            logger.info("Webhook delivery %s for job %s already handled", delivery_id, job_id)
+            return JSONResponse({"received": True, "duplicate": True})
+
+    try:
+        await job_registry.signal(job_id)
+    except Exception:
+        logger.warning(
+            "Could not signal job %s; it completes on the fallback poll", job_id, exc_info=True
+        )
+    else:
+        logger.debug("Webhook %s for job %s: waiter signalled", event, job_id)
 
     return JSONResponse({"received": True})

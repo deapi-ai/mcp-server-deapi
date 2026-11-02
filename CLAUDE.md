@@ -52,7 +52,7 @@ The primary server is `deapi_mcp/server_remote.py` — an HTTP/SSE-based MCP ser
 - **`deapi_mcp/auth_code_store.py`** - Single-use OAuth authorization codes: Redis when `DEAPI_REDIS_HOST` is set (any replica can redeem a code), in-memory otherwise (single replica only)
 - **`deapi_mcp/observability.py`** - Per-call outcome (`CallOutcome` on a ContextVar, `note_*` recorders, `classify`) and injectable no-op sinks; the core has no metrics dependency. `classify` labels a failed call from its most recent note; work whose failure the call survives runs inside `errors_tolerated()` (or calls `forget_api_error()` before a retry) so it never labels the call
 - **`deapi_mcp/server_remote.py`** - `register_core_tools(server)`, `create_app(server, *, metrics=None)` and `build_app()`; a deployment can import the core and inject a metrics overlay
-- **`deapi_mcp/webhooks.py`** - Internal completion webhooks: HMAC-verified receiver at `/webhooks/deapi` and the job registry the poller waits on. Only mounted when `DEAPI_WEBHOOKS_INTERNAL` is set
+- **`deapi_mcp/webhooks.py`** - Internal completion webhooks: HMAC-verified receiver at `/webhooks/deapi`, `delivery_id` dedupe, and the job registry the poller waits on (`JobRegistry` protocol; default `JobCompletionRegistry` in process memory; replace it with `create_app(job_registry=...)`; code reads it through `get_job_registry()`, never a module global). Only mounted when `DEAPI_WEBHOOKS_INTERNAL` is set
 
 ### Tool Implementations (`deapi_mcp/tools/`)
 
