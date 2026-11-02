@@ -43,9 +43,6 @@ class Settings(BaseSettings):
     max_retries: int = Field(
         default=3, description="Maximum number of retry attempts for failed requests"
     )
-    retry_backoff_factor: float = Field(
-        default=2.0, description="Exponential backoff factor for retries"
-    )
 
     # Polling Configuration by Job Type
     polling_audio: PollingConfig = Field(
@@ -161,9 +158,10 @@ class Settings(BaseSettings):
         description="Refuse to start when Redis is not configured, instead of falling back to memory",
     )
 
-    # Application metrics: counters and active users live in a separate Redis database so
-    # they never mix with the OAuth codes. Env vars: DEAPI_METRICS_TOKEN,
-    # DEAPI_METRICS_REDIS_DB, DEAPI_METRICS_PREFIX.
+    # Settings for an optional metrics overlay (create_app(server, metrics=...)). The core
+    # never reads them; they live here so an overlay shares this env prefix, validation and
+    # the Redis host above. Env vars: DEAPI_METRICS_TOKEN, DEAPI_METRICS_REDIS_DB,
+    # DEAPI_METRICS_PREFIX.
     metrics_token: SecretStr | None = Field(
         default=None,
         repr=False,

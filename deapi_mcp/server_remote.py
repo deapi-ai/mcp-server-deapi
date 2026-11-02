@@ -15,7 +15,7 @@ from fastmcp import FastMCP
 from starlette.applications import Starlette
 
 # Import FastMCP-compatible auth provider
-from . import auth_code_store
+from . import __version__, auth_code_store
 from .fastmcp_auth import DeapiAuthProvider
 
 # Import tool functions
@@ -63,7 +63,7 @@ from .tools.video import (
 
 # Initialize FastMCP server WITHOUT auth (will be added later)
 # Auth requires knowing the base URL which we don't have until runtime
-mcp = FastMCP(name="deAPI AI API", auth=None)
+mcp = FastMCP(name="deAPI AI API", version=__version__, auth=None)
 
 
 def register_core_tools(server: FastMCP) -> None:
