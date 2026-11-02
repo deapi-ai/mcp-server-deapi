@@ -120,8 +120,13 @@ settings must be shared:
   `DEAPI_REDIS_REQUIRED=true` so a replica without Redis refuses to start instead of silently
   keeping codes in memory.
 
-Leave `DEAPI_WEBHOOKS_INTERNAL` off with several replicas: the completion callback can reach a
-replica that is not waiting for that job (the job still completes, through polling).
+Completion webhooks (`DEAPI_WEBHOOKS_INTERNAL`) need one more piece with several replicas. The
+callback can reach a replica that is not waiting for that job, and the default job registry lives
+in process memory. Either leave the webhooks off (jobs complete through polling), or build the
+app with a shared registry: `create_app(server, job_registry=...)` with an implementation of
+`deapi_mcp.webhooks.JobRegistry` that relays each signal to every replica, for example over a
+pub/sub channel. Without one, a misrouted callback costs latency, never correctness: that job
+completes on the fallback poll.
 
 ### Graceful Shutdown
 

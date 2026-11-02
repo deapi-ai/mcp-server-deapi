@@ -22,7 +22,7 @@ from .schemas import (
     JobStatusResponse,
     ModelsResponse,
 )
-from .webhooks import internal_webhooks_enabled, registry
+from .webhooks import get_job_registry, internal_webhooks_enabled
 
 # The models endpoint caps `limit` at 50 server-side and defaults to 25.
 # Requesting the cap keeps the number of round trips low; the page loop in
@@ -314,7 +314,7 @@ class DeapiClient:
         if use_internal:
             # Tracking after submit is safe: a callback that beats us here is
             # kept by the registry and found already set.
-            registry.track(response.data.request_id)
+            get_job_registry().track(response.data.request_id)
 
         return response
 

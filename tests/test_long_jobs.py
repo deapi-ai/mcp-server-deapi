@@ -14,7 +14,7 @@ from deapi_mcp.config import PollingConfig
 from deapi_mcp.polling_manager import PollingManager
 from deapi_mcp.schemas import JobStatusData, JobStatusResponse, ToolResult
 from deapi_mcp.tools._responses import build_job_response
-from deapi_mcp.webhooks import registry
+from deapi_mcp.webhooks import get_job_registry
 
 
 def status(state, **extra):
@@ -59,6 +59,7 @@ class TestPollerBudget:
         """A later check_job_status(wait_seconds) should still wake on the callback."""
         client = AsyncMock()
         client.get_job_status = AsyncMock(return_value=status("processing"))
+        registry = get_job_registry()
         registry.track("job-hook")
         try:
             with patch("deapi_mcp.polling_manager.settings") as settings:

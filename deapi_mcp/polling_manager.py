@@ -11,7 +11,7 @@ from .config import PollingConfig, settings
 from .deapi_client import DeapiAPIError, DeapiClient
 from .observability import forget_api_error, note_job_failure
 from .schemas import JobStatus, JobStatusResponse, ToolResult
-from .webhooks import registry
+from .webhooks import get_job_registry
 
 logger = logging.getLogger(__name__)
 
@@ -69,11 +69,12 @@ class PollingManager:
         # Never sleep past the end of this call's wait: the last status check
         # should land just before it, not one long backoff after.
         remaining = max(remaining, 0.0)
-        if not registry.is_tracked(job_id):
+        job_registry = get_job_registry()
+        if not job_registry.is_tracked(job_id):
             await asyncio.sleep(min(delay, remaining))
             return
 
-        event = registry.track(job_id)
+        event = job_registry.track(job_id)
         try:
             await asyncio.wait_for(
                 event.wait(), timeout=min(settings.webhook_fallback_poll_interval, remaining)
@@ -149,7 +150,7 @@ class PollingManager:
             # running stays tracked, so a later check_job_status(wait_seconds)
             # wakes on its callback too; the registry's TTL sweep bounds it.
             if result is None or not result.in_progress:
-                registry.forget(job_id)
+                get_job_registry().forget(job_id)
 
     async def _poll_until_complete(
         self,

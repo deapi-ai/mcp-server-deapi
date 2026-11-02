@@ -26,7 +26,7 @@ Security fixes go into the latest release. Upgrade to the newest tag to receive 
 
 | Version | Supported |
 |---------|-----------|
-| latest 0.5.x | Yes |
+| latest release | Yes |
 | older | No |
 
 ## Scope

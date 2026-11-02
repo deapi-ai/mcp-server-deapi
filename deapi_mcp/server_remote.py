@@ -8,7 +8,8 @@ the stock ``build_app`` passes nothing.
 import asyncio
 import logging
 import os
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator
 
 import uvicorn
 from fastmcp import FastMCP
@@ -60,6 +61,7 @@ from .tools.video import (
     video_upscale,
     video_upscale_price,
 )
+from .webhooks import JobRegistry, get_job_registry, set_job_registry
 
 # Initialize FastMCP server WITHOUT auth (will be added later)
 # Auth requires knowing the base URL which we don't have until runtime
@@ -169,14 +171,39 @@ def require_jwt_secret_key(host: str) -> None:
     raise SystemExit(1)
 
 
-def create_app(server: "FastMCP | None" = None, *, metrics: Any = None) -> Starlette:
-    """Build the Starlette app from the core server, plus an optional overlay.
+def _run_job_registry_with_lifespan(app: Starlette) -> None:
+    """Start the job registry before the app serves and stop it after the app's own shutdown."""
+    inner = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[Any]:
+        job_registry = get_job_registry()
+        await job_registry.start()
+        try:
+            async with inner(app) as state:
+                yield state
+        finally:
+            await job_registry.stop()
+
+    app.router.lifespan_context = lifespan
+
+
+def create_app(
+    server: "FastMCP | None" = None,
+    *,
+    metrics: Any = None,
+    job_registry: JobRegistry | None = None,
+) -> Starlette:
+    """Build the Starlette app from the core server, plus optional overlays.
 
     ``server`` defaults to this module's ``mcp``. ``metrics`` is an optional overlay
     that instruments tools and OAuth, adds the missing-token counter and mounts
     /metrics; the core carries no metrics dependency of its own, and the stock
-    server passes nothing. Mutates ``server`` (auth, middleware), so call it once
-    per process per server.
+    server passes nothing. ``job_registry`` replaces the in-process registry that
+    completion webhooks wake waiting tools through; pass a shared one when several
+    replicas serve the same receiver URL. Its ``start``/``stop`` run with the app's
+    lifespan while webhooks are on. Mutates ``server`` (auth, middleware) and the
+    process-wide registry, so call it once per process per server.
     """
     server = server if server is not None else mcp
     logger = logging.getLogger(__name__)
@@ -277,10 +304,14 @@ def create_app(server: "FastMCP | None" = None, *, metrics: Any = None) -> Starl
     starlette_app.routes.append(Route("/authorize", authorize_handler, methods=["GET"]))
     starlette_app.routes.append(Route("/token", token_handler, methods=["POST"]))
 
+    if job_registry is not None:
+        set_job_registry(job_registry)
+
     # Completion webhooks: only mounted when configured, so a server
     # that isn't using them exposes no receiver at all.
     if internal_webhooks_enabled():
         starlette_app.routes.append(Route(WEBHOOK_ROUTE, webhook_receiver, methods=["POST"]))
+        _run_job_registry_with_lifespan(starlette_app)
         logger.info(
             f"Completion webhooks: ON -- jobs will call back {deapi_settings.webhook_receiver_url} "
             f"(safety-net poll every {deapi_settings.webhook_fallback_poll_interval:.0f}s)"

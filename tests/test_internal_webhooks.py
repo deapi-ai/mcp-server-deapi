@@ -27,6 +27,8 @@ from deapi_mcp.webhooks import (
     WEBHOOK_ROUTE,
     JobCompletionRegistry,
     compute_signature,
+    get_job_registry,
+    set_job_registry,
     verify_signature,
     webhook_receiver,
 )
@@ -49,30 +51,32 @@ def internal_on(monkeypatch):
 def fresh_registry(monkeypatch):
     """Isolate the module-level registry so tests cannot leak jobs into each other."""
     reg = JobCompletionRegistry()
-    monkeypatch.setattr(webhooks, "registry", reg)
-    monkeypatch.setattr("deapi_mcp.deapi_client.registry", reg)
-    monkeypatch.setattr("deapi_mcp.polling_manager.registry", reg)
+    monkeypatch.setattr(webhooks, "_job_registry", reg)
     return reg
 
 
 def signed_headers(
-    body: bytes, secret: str = SECRET, ts: float | None = None, event="job.completed"
+    body: bytes,
+    secret: str = SECRET,
+    ts: float | None = None,
+    event="job.completed",
+    delivery_id="d-1",
 ):
     ts_str = str(int(ts if ts is not None else time.time()))
     return {
         "X-DeAPI-Signature": compute_signature(secret, ts_str, body),
         "X-DeAPI-Timestamp": ts_str,
         "X-DeAPI-Event": event,
-        "X-DeAPI-Delivery-Id": "d-1",
+        "X-DeAPI-Delivery-Id": delivery_id,
         "Content-Type": "application/json",
     }
 
 
-def payload(job_id="job-1", event="job.completed") -> bytes:
+def payload(job_id="job-1", event="job.completed", delivery_id=None) -> bytes:
     return json.dumps(
         {
             "event": event,
-            "delivery_id": "d-1",
+            "delivery_id": delivery_id or f"d-{job_id}-{event}",
             "timestamp": "2026-09-12T10:00:00+00:00",
             "data": {"job_request_id": job_id, "status": "done", "job_type": "txt2img"},
         }
@@ -148,14 +152,14 @@ class TestRegistry:
         reg = JobCompletionRegistry()
         event = reg.track("j")
         assert not event.is_set()
-        reg.signal("j")
+        await reg.signal("j")
         assert event.is_set()
 
     @pytest.mark.asyncio
     async def test_signal_before_track_is_not_lost(self):
         """A fast job can finish before submit_job has returned the job id."""
         reg = JobCompletionRegistry()
-        reg.signal("j")
+        await reg.signal("j")
         event = reg.track("j")
         assert event.is_set(), "early callback must be found already set"
 
@@ -174,6 +178,204 @@ class TestRegistry:
         reg.track("new")
         assert not reg.is_tracked("old")
         assert reg.is_tracked("new")
+
+    @pytest.mark.asyncio
+    async def test_delivery_is_claimed_once(self):
+        reg = JobCompletionRegistry(delivery_ttl=60)
+        assert await reg.claim_delivery("d-1") is True
+        assert await reg.claim_delivery("d-1") is False
+        assert await reg.claim_delivery("d-2") is True
+
+    @pytest.mark.asyncio
+    async def test_delivery_claim_expires(self):
+        reg = JobCompletionRegistry(delivery_ttl=60)
+        await reg.claim_delivery("d-1")
+        reg._deliveries["d-1"] -= 61
+        assert await reg.claim_delivery("d-1") is True
+
+    @pytest.mark.asyncio
+    async def test_delivery_window_defaults_to_twice_the_tolerance(self, monkeypatch):
+        monkeypatch.setattr(settings, "webhook_timestamp_tolerance", 300.0)
+        reg = JobCompletionRegistry()
+        await reg.claim_delivery("d-1")
+        remaining = reg._deliveries["d-1"] - time.monotonic()
+        assert 590 < remaining <= 600
+
+    @pytest.mark.asyncio
+    async def test_remembered_deliveries_are_capped(self):
+        reg = JobCompletionRegistry(delivery_ttl=60, max_deliveries=3)
+        for i in range(5):
+            await reg.claim_delivery(f"d-{i}")
+        assert list(reg._deliveries) == ["d-2", "d-3", "d-4"]
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_are_no_ops(self):
+        reg = JobCompletionRegistry()
+        await reg.start()
+        await reg.stop()
+
+
+class RecordingRegistry(JobCompletionRegistry):
+    """A stand-in for a shared registry: records what the core asks of it."""
+
+    def __init__(self, *, fail_signal=False, fail_claim=False):
+        super().__init__(delivery_ttl=60)
+        self.signalled: list[str] = []
+        self.claimed: list[str] = []
+        self.fail_signal = fail_signal
+        self.fail_claim = fail_claim
+        self.started = 0
+        self.stopped = 0
+
+    async def signal(self, job_id):
+        self.signalled.append(job_id)
+        if self.fail_signal:
+            raise ConnectionError("relay down")
+        await super().signal(job_id)
+
+    async def claim_delivery(self, delivery_id):
+        self.claimed.append(delivery_id)
+        if self.fail_claim:
+            raise ConnectionError("store down")
+        return await super().claim_delivery(delivery_id)
+
+    async def start(self):
+        self.started += 1
+
+    async def stop(self):
+        self.stopped += 1
+
+
+class TestInjectedRegistry:
+    """A deployment with several replicas swaps the registry; the core must only use the seam."""
+
+    @pytest.fixture
+    def recording(self, monkeypatch):
+        reg = RecordingRegistry()
+        monkeypatch.setattr(webhooks, "_job_registry", reg)
+        return reg
+
+    def receiver(self):
+        app = Starlette(routes=[Route(WEBHOOK_ROUTE, webhook_receiver, methods=["POST"])])
+        return TestClient(app)
+
+    def test_set_job_registry_replaces_the_default(self, monkeypatch):
+        monkeypatch.setattr(webhooks, "_job_registry", webhooks._job_registry)
+        reg = RecordingRegistry()
+        set_job_registry(reg)
+        assert get_job_registry() is reg
+
+    def test_receiver_signals_through_the_injected_registry(self, internal_on, recording):
+        body = payload("job-r")
+        r = self.receiver().post(WEBHOOK_ROUTE, content=body, headers=signed_headers(body))
+        assert r.status_code == 200
+        assert recording.signalled == ["job-r"]
+
+    def test_replayed_delivery_is_acknowledged_once(self, internal_on, recording):
+        body = payload("job-r", delivery_id="d-same")
+        headers = signed_headers(body, delivery_id="d-same")
+        client = self.receiver()
+        first = client.post(WEBHOOK_ROUTE, content=body, headers=headers)
+        again = client.post(WEBHOOK_ROUTE, content=body, headers=headers)
+        assert first.status_code == again.status_code == 200
+        assert again.json().get("duplicate") is True
+        assert recording.signalled == ["job-r"], "a replay must not wake the waiter twice"
+
+    def test_header_delivery_id_is_used_when_the_body_has_none(self, internal_on, recording):
+        body = json.dumps(
+            {"event": "job.completed", "data": {"job_request_id": "job-h", "status": "done"}}
+        ).encode()
+        headers = signed_headers(body, delivery_id="d-header")
+        self.receiver().post(WEBHOOK_ROUTE, content=body, headers=headers)
+        assert recording.claimed == ["d-header"]
+
+    def test_processing_event_claims_nothing(self, internal_on, recording):
+        body = payload("job-p", event="job.processing")
+        headers = signed_headers(body, event="job.processing")
+        self.receiver().post(WEBHOOK_ROUTE, content=body, headers=headers)
+        assert recording.claimed == [] and recording.signalled == []
+
+    def test_bad_signature_claims_nothing(self, internal_on, recording):
+        body = payload("job-x")
+        headers = signed_headers(body, secret="wrong" * 8)
+        r = self.receiver().post(WEBHOOK_ROUTE, content=body, headers=headers)
+        assert r.status_code == 401
+        assert recording.claimed == [] and recording.signalled == []
+
+    def test_failed_signal_is_still_acknowledged(self, internal_on, monkeypatch):
+        """The waiter falls back to polling; an API retry would not fix the relay."""
+        reg = RecordingRegistry(fail_signal=True)
+        monkeypatch.setattr(webhooks, "_job_registry", reg)
+        body = payload("job-s")
+        r = self.receiver().post(WEBHOOK_ROUTE, content=body, headers=signed_headers(body))
+        assert r.status_code == 200
+        assert reg.signalled == ["job-s"]
+
+    def test_failed_claim_still_signals(self, internal_on, monkeypatch):
+        reg = RecordingRegistry(fail_claim=True)
+        monkeypatch.setattr(webhooks, "_job_registry", reg)
+        body = payload("job-c")
+        r = self.receiver().post(WEBHOOK_ROUTE, content=body, headers=signed_headers(body))
+        assert r.status_code == 200
+        assert reg.signalled == ["job-c"]
+
+    @pytest.mark.parametrize("job_id", [123, "", None, {"id": "x"}])
+    def test_non_string_job_id_is_400(self, internal_on, recording, job_id):
+        body = json.dumps({"event": "job.completed", "data": {"job_request_id": job_id}}).encode()
+        r = self.receiver().post(WEBHOOK_ROUTE, content=body, headers=signed_headers(body))
+        assert r.status_code == 400
+        assert recording.signalled == []
+
+    @pytest.mark.asyncio
+    async def test_submit_and_poll_use_the_injected_registry(self, internal_on, recording):
+        from deapi_mcp.polling_manager import PollingManager
+
+        api = AsyncMock()
+        api.get_job_status = AsyncMock(side_effect=[status("processing"), status("done")])
+        recording.track("job-1")
+
+        async def callback_arrives():
+            await asyncio.sleep(0.05)
+            await recording.signal("job-1")
+
+        result, _ = await asyncio.gather(
+            PollingManager(api, job_type="image").poll_until_complete("job-1"),
+            callback_arrives(),
+        )
+        assert result.success is True
+        assert not recording.is_tracked("job-1"), "the poller forgets through the injected registry"
+
+
+class TestCreateAppRegistry:
+
+    @pytest.fixture(autouse=True)
+    def keep_default(self, monkeypatch):
+        monkeypatch.setattr(webhooks, "_job_registry", webhooks._job_registry)
+        monkeypatch.setenv("MCP_HOST", "127.0.0.1")
+
+    def test_create_app_installs_the_registry_and_runs_its_lifespan(self, internal_on):
+        from fastmcp import FastMCP
+
+        from deapi_mcp.server_remote import create_app
+
+        reg = RecordingRegistry()
+        app = create_app(FastMCP("t"), job_registry=reg)
+        assert get_job_registry() is reg
+        assert reg.started == 0
+        with TestClient(app):
+            assert reg.started == 1 and reg.stopped == 0
+        assert reg.stopped == 1
+
+    def test_registry_is_not_started_when_webhooks_are_off(self):
+        from fastmcp import FastMCP
+
+        from deapi_mcp.server_remote import create_app
+
+        reg = RecordingRegistry()
+        app = create_app(FastMCP("t"), job_registry=reg)
+        with TestClient(app):
+            pass
+        assert reg.started == 0 and reg.stopped == 0
 
 
 # =============================================================================
@@ -368,7 +570,7 @@ class TestPollingWaitsOnCallback:
 
         async def api_calls_back_after(delay):
             await asyncio.sleep(delay)
-            fresh_registry.signal("job-1")
+            await fresh_registry.signal("job-1")
 
         started = time.monotonic()
         result, _ = await asyncio.gather(
