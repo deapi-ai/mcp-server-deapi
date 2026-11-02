@@ -605,6 +605,47 @@ class TestPollingWaitsOnCallback:
         assert api.get_job_status.await_count == 3
 
     @pytest.mark.asyncio
+    async def test_lost_callback_at_the_end_of_the_budget_still_returns_the_result(
+        self, internal_on, fresh_registry, monkeypatch
+    ):
+        """The wait on a callback that never comes can use the whole budget. The read after it
+        must still happen: a job that finished meanwhile is returned, not reported running."""
+        from deapi_mcp.polling_manager import PollingManager
+
+        monkeypatch.setattr(settings, "webhook_fallback_poll_interval", 10.0)
+        api = AsyncMock()
+        api.get_job_status = AsyncMock(side_effect=[status("processing"), status("done")])
+        pm = PollingManager(api, job_type="image", max_wait=0.1)
+        fresh_registry.track("job-1")
+
+        result = await asyncio.wait_for(pm.poll_until_complete("job-1"), timeout=2.0)
+
+        assert result.success is True and not result.in_progress
+        assert api.get_job_status.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_job_still_running_after_the_final_read_is_handed_back(
+        self, internal_on, fresh_registry, monkeypatch
+    ):
+        from deapi_mcp.polling_manager import PollingManager
+
+        monkeypatch.setattr(settings, "webhook_fallback_poll_interval", 10.0)
+        api = AsyncMock()
+        api.get_job_status = AsyncMock(return_value=status("processing"))
+        pm = PollingManager(api, job_type="image", max_wait=0.1)
+        fresh_registry.track("job-1")
+
+        result = await asyncio.wait_for(pm.poll_until_complete("job-1"), timeout=2.0)
+
+        assert result.success is True and result.in_progress
+        assert result.job_id == "job-1"
+        assert api.get_job_status.await_count == 2, "one read before the wait, one after it"
+
+    def test_default_fallback_poll_fits_several_times_in_one_call(self):
+        s = Settings(_env_file=None)
+        assert s.webhook_fallback_poll_interval * 2 < s.tool_max_wait
+
+    @pytest.mark.asyncio
     async def test_untracked_job_polls_as_before(self, internal_on, fresh_registry, monkeypatch):
         """A job whose caller supplied their own webhook is not tracked and must not block."""
         from deapi_mcp.polling_manager import PollingManager

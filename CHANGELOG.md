@@ -3,6 +3,18 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.6.1
+
+### Fixed
+- A tool call whose wait ran to the end of its budget gave up without reading the job status
+  again. With completion webhooks on and a callback that never arrived, the wait on that callback
+  could take the whole budget, so a job that had long finished came back as still running
+  (`done: false`). The last wait is now always followed by one more status read.
+
+### Changed
+- `DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL` defaults to 15 s (was 45 s, the same as
+  `DEAPI_TOOL_MAX_WAIT`). A callback that does not arrive now costs at most about 15 s.
+
 ## 0.6.0
 
 ### Added

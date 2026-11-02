@@ -161,7 +161,6 @@ class PollingManager:
         current_delay = self.config.initial_delay
         attempt = 0
         last_progress = None
-        last_status: Optional[JobStatus] = None
         reported: Optional[float] = None  # last progress value sent to the client
 
         logger.debug("Polling %s job %s", self.job_type, job_id)
@@ -173,26 +172,11 @@ class PollingManager:
             attempt += 1
             elapsed = time.time() - start_time
 
-            # This call has waited long enough. The job has not failed — it is
-            # still running, paid for, and reachable by its id — so say exactly
-            # that instead of reporting an error.
-            if attempt > 1 and elapsed >= self.max_wait:
-                logger.debug("Job %s still running after %.0fs", job_id, elapsed)
-                return ToolResult(
-                    success=True,
-                    in_progress=True,
-                    job_id=job_id,
-                    status=last_status or JobStatus.PROCESSING,
-                    progress=last_progress,
-                    metadata={"elapsed_time": elapsed, "attempts": attempt - 1},
-                )
-
             # Poll job status
             try:
                 status_response: JobStatusResponse = await self.client.get_job_status(job_id)
                 status_data = status_response.data
                 current_status = status_data.status
-                last_status = current_status
 
                 # Report progress, with the status as its message, when it rose
                 if status_data.progress is not None:
@@ -267,6 +251,23 @@ class PollingManager:
                 if status_data.progress is not None:
                     last_progress = status_data.progress
                 remaining = self.max_wait - (time.time() - start_time)
+                # This call has waited long enough. The job has not failed — it is
+                # still running, paid for, and reachable by its id — so say exactly
+                # that instead of reporting an error. Checked right after a status
+                # read, never after a wait: a wait that runs to the end of the budget
+                # (a callback that never came) is always followed by one more read,
+                # so a job that finished meanwhile is returned, not reported as running.
+                if remaining <= 0:
+                    elapsed = time.time() - start_time
+                    logger.debug("Job %s still running after %.0fs", job_id, elapsed)
+                    return ToolResult(
+                        success=True,
+                        in_progress=True,
+                        job_id=job_id,
+                        status=current_status,
+                        progress=last_progress,
+                        metadata={"elapsed_time": elapsed, "attempts": attempt},
+                    )
                 await self._wait_before_next_poll(job_id, current_delay, remaining)
                 current_delay = self._calculate_next_delay(current_delay, attempt)
 

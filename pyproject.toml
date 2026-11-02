@@ -1,6 +1,6 @@
 [project]
 name = "deapi-mcp"
-version = "0.6.0"
+version = "0.6.1"
 description = "Production-ready MCP server for the deAPI REST API"
 authors = [
     {name = "Adam Iglewski"}

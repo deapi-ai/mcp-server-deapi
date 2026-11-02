@@ -115,7 +115,7 @@ class Settings(BaseSettings):
         description="Key the API signs callbacks with (HMAC-SHA256). 32-255 characters",
     )
     webhook_fallback_poll_interval: float = Field(
-        default=45.0,
+        default=15.0,
         description="Seconds between safety-net status polls while waiting on a callback",
     )
     webhook_timestamp_tolerance: float = Field(

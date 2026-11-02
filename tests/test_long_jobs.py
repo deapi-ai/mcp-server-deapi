@@ -55,6 +55,20 @@ class TestPollerBudget:
         assert result.in_progress is True
         assert slept and max(slept) <= 0.5
 
+    async def test_a_job_that_finishes_during_the_last_wait_is_returned(self):
+        """The wait that ends the budget is followed by one more read, not by a bare give-up."""
+        client = AsyncMock()
+        client.get_job_status = AsyncMock(
+            side_effect=[status("processing"), status("done", result_url="https://r/i.png")]
+        )
+        with patch("deapi_mcp.polling_manager.settings") as settings:
+            fast_settings(settings, max_wait=0.05, initial_delay=30.0)
+            result = await PollingManager(client, "image").poll_until_complete("job-1")
+
+        assert result.success is True and not result.in_progress
+        assert result.result_url == "https://r/i.png"
+        assert client.get_job_status.await_count == 2
+
     async def test_a_running_job_stays_tracked_for_its_webhook(self):
         """A later check_job_status(wait_seconds) should still wake on the callback."""
         client = AsyncMock()
