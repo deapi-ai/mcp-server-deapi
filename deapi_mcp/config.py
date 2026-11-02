@@ -43,9 +43,6 @@ class Settings(BaseSettings):
     max_retries: int = Field(
         default=3, description="Maximum number of retry attempts for failed requests"
     )
-    retry_backoff_factor: float = Field(
-        default=2.0, description="Exponential backoff factor for retries"
-    )
 
     # Polling Configuration by Job Type
     polling_audio: PollingConfig = Field(
@@ -145,7 +142,7 @@ class Settings(BaseSettings):
         repr=False,
         description="Redis password. A SecretStr so it never reaches a repr or an error message",
     )
-    redis_db: int = Field(default=11, description="Redis logical database number")
+    redis_db: int = Field(default=0, description="Redis logical database number")
     redis_scheme: Literal["plain", "tls"] = Field(
         default="plain", description="Connection scheme: plain TCP or TLS"
     )
@@ -161,15 +158,16 @@ class Settings(BaseSettings):
         description="Refuse to start when Redis is not configured, instead of falling back to memory",
     )
 
-    # Application metrics: counters and active users live in a separate Redis database so
-    # they never mix with the OAuth codes. Env vars: DEAPI_METRICS_TOKEN,
-    # DEAPI_METRICS_REDIS_DB, DEAPI_METRICS_PREFIX.
+    # Settings for an optional metrics overlay (create_app(server, metrics=...)). The core
+    # never reads them; they live here so an overlay shares this env prefix, validation and
+    # the Redis host above. Env vars: DEAPI_METRICS_TOKEN, DEAPI_METRICS_REDIS_DB,
+    # DEAPI_METRICS_PREFIX.
     metrics_token: SecretStr | None = Field(
         default=None,
         repr=False,
         description="Bearer token Prometheus presents to /metrics. Unset disables the endpoint",
     )
-    metrics_redis_db: int = Field(default=12, description="Redis logical database for metrics")
+    metrics_redis_db: int = Field(default=1, description="Redis logical database for metrics")
     metrics_prefix: str = Field(
         default="deapi_mcp_metrics_",
         description="Prefix prepended to every metrics key",

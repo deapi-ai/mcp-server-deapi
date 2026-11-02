@@ -243,6 +243,10 @@ server never stores tokens. See [AUTH.md](AUTH.md).
 If the server sits behind a proxy, set `FORWARDED_ALLOW_IPS` to that proxy's address so only it
 can set `X-Forwarded-*` headers (the default `*` trusts any client).
 
+Behind a proxy, also set `PUBLIC_BASE_URL` to the public URL (`https://mcp.example.com`). The
+401 challenge's `resource_metadata` is built from it, and without it points at the bind
+address (`http://0.0.0.0:8000`), which MCP clients cannot reach, so OAuth discovery fails.
+
 ### 3. Firewall Configuration
 
 Only expose port 8000 (or your chosen port) and limit access:

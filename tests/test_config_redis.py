@@ -24,7 +24,7 @@ def _clean_redis_env(monkeypatch):
 
 def test_redis_defaults():
     s = Settings(_env_file=None)
-    assert (s.redis_host, s.redis_port, s.redis_db) == (None, 6379, 11)
+    assert (s.redis_host, s.redis_port, s.redis_db) == (None, 6379, 0)
     assert (s.redis_scheme, s.redis_prefix, s.redis_required) == (
         "plain",
         "deapi_mcp_database_",
@@ -35,7 +35,7 @@ def test_redis_defaults():
 def test_redis_env_names(monkeypatch):
     monkeypatch.setenv("DEAPI_REDIS_HOST", "redis.example.com")
     monkeypatch.setenv("DEAPI_REDIS_SCHEME", "tls")
-    monkeypatch.setenv("DEAPI_REDIS_CA_FILE", "/etc/redis-ca/ca.pem")
+    monkeypatch.setenv("DEAPI_REDIS_CA_FILE", "/certs/redis-ca.pem")
     monkeypatch.setenv("DEAPI_REDIS_USERNAME", "mcp-app")
     s = Settings(_env_file=None)
     assert (s.redis_host, s.redis_scheme, s.redis_username) == (
@@ -96,7 +96,7 @@ def test_metrics_db_and_prefix_defaults(monkeypatch):
         monkeypatch.delenv(f"DEAPI_METRICS_{name}", raising=False)
     s = Settings(_env_file=None)
     assert (s.metrics_redis_db, s.metrics_prefix, s.metrics_token) == (
-        12,
+        1,
         "deapi_mcp_metrics_",
         None,
     )
@@ -106,11 +106,11 @@ def test_build_redis_client_db_override():
     from deapi_mcp.auth_code_store import build_redis_client
 
     s = Settings(_env_file=None, redis_host="redis.example.com")
-    kwargs = build_redis_client(s, db=12, timeout=0.5, retries=0).connection_pool.connection_kwargs
-    assert kwargs["db"] == 12
+    kwargs = build_redis_client(s, db=5, timeout=0.5, retries=0).connection_pool.connection_kwargs
+    assert kwargs["db"] == 5
     assert kwargs["socket_timeout"] == 0.5
     default = build_redis_client(s).connection_pool.connection_kwargs
-    assert (default["db"], default["socket_timeout"]) == (11, 2)
+    assert (default["db"], default["socket_timeout"]) == (0, 2)
 
 
 _BLANK_ENV = (
@@ -131,11 +131,11 @@ _BLANK_ENV = (
 
 
 def _assert_defaults(s: Settings) -> None:
-    assert (s.redis_host, s.redis_port, s.redis_db, s.redis_scheme) == (None, 6379, 11, "plain")
+    assert (s.redis_host, s.redis_port, s.redis_db, s.redis_scheme) == (None, 6379, 0, "plain")
     assert (s.redis_username, s.redis_password, s.redis_ca_file) == (None, None, None)
     assert (s.redis_prefix, s.redis_required) == ("deapi_mcp_database_", False)
     assert (s.deapi_api_version, s.webhooks_internal) == ("v2", False)
-    assert (s.metrics_token, s.metrics_redis_db) == (None, 12)
+    assert (s.metrics_token, s.metrics_redis_db) == (None, 1)
 
 
 def test_blank_env_values_mean_the_default(monkeypatch):
@@ -158,4 +158,4 @@ def test_blank_value_does_not_mask_a_real_one(monkeypatch):
     monkeypatch.setenv("DEAPI_REDIS_PORT", "6380")
     monkeypatch.setenv("DEAPI_REDIS_DB", "")
     s = Settings(_env_file=None)
-    assert (s.redis_port, s.redis_db) == (6380, 11)
+    assert (s.redis_port, s.redis_db) == (6380, 0)

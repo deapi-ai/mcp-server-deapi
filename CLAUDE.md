@@ -68,6 +68,7 @@ Tools are organized by category:
 ### Key Patterns
 
 - **Stateless**: Server never stores API tokens; they're passed per-request via HTTP headers
+- **Stateless transport**: `stateless_http=True`: no `Mcp-Session-Id`, `GET /mcp` answers 405, any replica serves any request
 - **Async polling**: `PollingManager` polls job status with type-specific strategies (audio: 1-5s, image: 2-8s, video: 5-30s)
 - **Error handling**: `DeapiAPIError` for API errors; tools always return `{"success": bool, "error"?: str, "result_url"?: str, "job_id"?: str}`
 - **Model cache**: Per account — accounts see different models, so each deAPI token has its own catalogue (keyed by an HMAC of the token, LRU-bounded, TTL 300 s, in process memory). Middleware enriches `tools/list` from the caller's catalogue. Tools call `ensure_model_cache(model=model)`: a slug missing from a fresh catalogue refetches it, at most once per 30 s
@@ -118,13 +119,25 @@ DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 
 # OAuth authorization code store. Unset host = in-memory store, single replica only.
 # DEAPI_REDIS_HOST=redis.example.com
-DEAPI_REDIS_DB=11
+DEAPI_REDIS_DB=0
 DEAPI_REDIS_PREFIX=deapi_mcp_database_
 DEAPI_REDIS_REQUIRED=false
 
 # Seconds in-flight tool calls may finish after SIGTERM
 MCP_GRACEFUL_SHUTDOWN_SECONDS=930
 ```
+
+`.env.example` is the full list. Keep it, the README and `deapi_mcp/config.py` in step.
+
+## Releasing
+
+1. Bump the version in `pyproject.toml` and `server.json`, then run `uv lock`.
+2. Add the release to `CHANGELOG.md`.
+3. Merge to `main`, then tag `vX.Y.Z` (annotated) on the merge commit.
+
+This repository is public. Commits, tests, fixtures and docs carry no infrastructure values
+(real hosts, IPs, usernames, keys): use `example.com`-style placeholders. Security reports go
+through the private channel in `SECURITY.md`, never public issues.
 
 ## Testing Notes
 

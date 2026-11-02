@@ -260,8 +260,11 @@ The server uses job-type-specific polling strategies:
 | Audio    | 1s           | 5s        | 5 min   |
 | Image    | 2s           | 8s        | 5 min   |
 | Video    | 5s           | 30s       | 15 min  |
+| Embedding | 0.5s        | 3s        | 2 min   |
+| Other (incl. `check_job_status`) | 2s | 10s | 5 min |
 
-Polling uses exponential backoff with a configurable multiplier (default: 1.5x).
+Polling uses exponential backoff with a configurable multiplier (default: 1.5x,
+`DEAPI_POLLING_<TYPE>__BACKOFF_FACTOR`).
 
 ### Error Handling
 
@@ -275,7 +278,8 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x).
 Configuration can be set via environment variables (prefixed with `DEAPI_`). A variable set to
 an empty value (`DEAPI_REDIS_PORT=`) counts as unset and takes the default. Comments go on their
 own line: some tools (`docker --env-file`, `kubectl create configmap --from-env-file`) keep text
-after a value, `# ...` included, as part of that value.
+after a value, `# ...` included, as part of that value. [`.env.example`](.env.example) lists
+every variable with its default; the block below shows the common ones.
 
 ```bash
 # API Configuration
@@ -308,7 +312,7 @@ DEAPI_WEBHOOK_FALLBACK_POLL_INTERVAL=45.0
 # DEAPI_REDIS_HOST=redis.example.com
 DEAPI_REDIS_PORT=6379
 # DEAPI_REDIS_PASSWORD=
-DEAPI_REDIS_DB=11
+DEAPI_REDIS_DB=0
 # Connection scheme: plain | tls (tls needs DEAPI_REDIS_CA_FILE)
 DEAPI_REDIS_SCHEME=plain
 # true = refuse to start without a Redis host
@@ -317,6 +321,12 @@ DEAPI_REDIS_REQUIRED=false
 # Seconds in-flight tool calls may run after SIGTERM before they are cancelled.
 # Keep it below your platform's termination grace period.
 MCP_GRACEFUL_SHUTDOWN_SECONDS=930
+
+# Behind a reverse proxy: the public URL OAuth discovery advertises (without it the
+# 401 challenge points at the bind address), and which proxies' X-Forwarded-* headers
+# are trusted.
+# PUBLIC_BASE_URL=https://mcp.example.com
+# FORWARDED_ALLOW_IPS=*
 ```
 
 With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally.
@@ -416,7 +426,11 @@ on a non-local host.
 
 `metrics` is an optional overlay that instruments tool calls and OAuth and mounts its own
 routes; the stock server (`build_app()`) passes none. Recorders for per-call outcomes and
-rejected logins plug in through `deapi_mcp.observability`.
+rejected logins plug in through `deapi_mcp.observability`. Settings an overlay can use
+(`DEAPI_METRICS_TOKEN`, `DEAPI_METRICS_REDIS_DB`, `DEAPI_METRICS_PREFIX`) are already defined
+in `deapi_mcp.config`; the core itself never reads them.
+
+The package ships type information (`py.typed`) and exposes `deapi_mcp.__version__`.
 
 ## API Token Security
 
@@ -542,10 +556,15 @@ If remote MCP connection fails:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## Support
 
 For issues related to:
 - **This MCP Server**: [Open an issue](https://github.com/deapi-ai/mcp-server-deapi/issues)
+- **A security vulnerability**: do not open a public issue; see [SECURITY.md](SECURITY.md)
 - **deAPI Platform**: Visit [docs.deapi.ai](https://docs.deapi.ai/)
 - **MCP Protocol**: Visit [modelcontextprotocol.io](https://modelcontextprotocol.io)
 <!-- mcp-name: io.github.deapi-ai/mcp-server-deapi -->

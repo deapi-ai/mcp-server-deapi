@@ -13,3 +13,12 @@ Entry points (see :mod:`deapi_mcp.server_remote`):
 
 The import package is ``deapi_mcp`` and the distribution is ``deapi-mcp``.
 """
+
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("deapi-mcp")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0.0.0+unknown"
+
+__all__ = ["__version__"]
