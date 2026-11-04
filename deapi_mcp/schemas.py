@@ -260,7 +260,9 @@ class AudioTranscriptionRequest(BaseModel):
 
     audio: str = Field(description="Audio file to transcribe (base64 encoded or URL)")
     include_ts: bool = Field(description="Should transcription include timestamps")
-    model: Optional[str] = Field("WhisperLargeV3", description="The model to use for transcription")
+    model: Optional[str] = Field(
+        "WhisperLargeV3Ct2", description="The model to use for transcription"
+    )
     return_result_in_response: Optional[bool] = Field(
         True,
         description=(
