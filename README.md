@@ -29,7 +29,7 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 ### Video Transcription Tools
 - `video_file_transcription` - Transcribe video files to text
 - `video_file_transcription_price` - Calculate video file transcription cost
-- `video_url_transcription` - Transcribe videos from URLs (YouTube, Twitter/X, Twitch, Kick)
+- `video_url_transcription` - Transcribe videos from URLs (YouTube, Twitter/X, Twitch, Kick, TikTok)
 - `video_url_transcription_price` - Calculate video URL transcription cost
 
 ### Image Tools

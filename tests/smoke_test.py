@@ -45,7 +45,7 @@ PRICE_TESTS = [
         "payload": {
             "duration_seconds": "120",
             "include_ts": "true",
-            "model": "WhisperLargeV3",
+            "model": "WhisperLargeV3Ct2",
         },
     },
     {

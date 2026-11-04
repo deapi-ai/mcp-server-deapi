@@ -83,7 +83,7 @@ def fetch_catalogue_slugs(token: str) -> list:
 
 def test_tools_name_at_least_the_known_examples():
     found = slugs_named_by_tools()
-    assert {"Flux1schnell", "WhisperLargeV3", "Ben2", "RealESRGAN_x4"} <= found.keys(), found
+    assert {"Flux1schnell", "WhisperLargeV3Ct2", "Ben2", "RealESRGAN_x4"} <= found.keys(), found
 
 
 def test_every_named_slug_is_in_the_snapshot():

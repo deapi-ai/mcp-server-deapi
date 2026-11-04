@@ -37,6 +37,20 @@ _DIARIZE_HELP = (
     "list (WhisperLargeV3 rejects it). Costs 1.5x, not stacked with a finer ts_level"
 )
 
+# WhisperLargeV3 ignores `lang`; Ct2 costs the same, honours `lang`, returns segments
+# and supports diarize and word timestamps.
+DEFAULT_TRANSCRIPTION_MODEL = "WhisperLargeV3Ct2"
+_MODEL_HELP = (
+    "Whisper model from the model list. Default WhisperLargeV3Ct2: honours lang, returns "
+    "segments, supports diarize and word timestamps"
+)
+_LANG_HELP = (
+    "Language of the recording as an ISO code, e.g. 'en', 'pl'. Set it whenever you know the "
+    "language: auto-detection can pick the wrong one, e.g. on short or accented audio. It forces "
+    "the output language, so a wrong code returns a translation instead of a transcript. "
+    "Auto-detected when unset"
+)
+
 
 def _add_transcription_params(
     form_data: dict[str, Any],
@@ -151,16 +165,14 @@ def _resolve_tts_mode(model_slug: str) -> Optional[str]:
 async def audio_transcription(
     audio: Annotated[str, Field(description="Audio file (base64 encoded or URL)")],
     include_ts: Annotated[bool, Field(description="Include timestamps in transcription")],
-    model: Annotated[
-        str, Field(description="Whisper model (e.g., 'WhisperLargeV3')")
-    ] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
     lang: Annotated[
         Optional[str],
         Field(
             max_length=16,
-            description="Source language hint, e.g. 'en', 'pl'. Auto-detected when unset",
+            description=_LANG_HELP,
         ),
     ] = None,
     return_result_in_response: Annotated[
@@ -236,12 +248,10 @@ async def audio_transcription_price(
     duration_seconds: Annotated[
         float, Field(gt=0, description="Length of the audio in seconds, which the price follows")
     ],
-    model: Annotated[str, Field(description="Whisper model name")] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
-    lang: Annotated[
-        Optional[str], Field(max_length=16, description="Source language hint, e.g. 'en', 'pl'")
-    ] = None,
+    lang: Annotated[Optional[str], Field(max_length=16, description=_LANG_HELP)] = None,
 ) -> dict[str, Any]:
     """Calculate price for audio transcription.
 
@@ -526,16 +536,14 @@ async def video_file_transcription(
         ),
     ],
     include_ts: Annotated[bool, Field(description="Include timestamps in transcription")],
-    model: Annotated[
-        str, Field(description="Whisper model (e.g., 'WhisperLargeV3')")
-    ] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
     lang: Annotated[
         Optional[str],
         Field(
             max_length=16,
-            description="Source language hint, e.g. 'en', 'pl'. Auto-detected when unset",
+            description=_LANG_HELP,
         ),
     ] = None,
     return_result_in_response: Annotated[
@@ -611,12 +619,10 @@ async def video_file_transcription_price(
     duration_seconds: Annotated[
         float, Field(gt=0, description="Length of the video in seconds, which the price follows")
     ],
-    model: Annotated[str, Field(description="Whisper model name")] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
-    lang: Annotated[
-        Optional[str], Field(max_length=16, description="Source language hint, e.g. 'en', 'pl'")
-    ] = None,
+    lang: Annotated[Optional[str], Field(max_length=16, description=_LANG_HELP)] = None,
 ) -> dict[str, Any]:
     """Calculate price for video file transcription.
 
@@ -658,16 +664,14 @@ async def video_url_transcription(
         ),
     ],
     include_ts: Annotated[bool, Field(description="Include timestamps in transcription")],
-    model: Annotated[
-        str, Field(description="Whisper model (e.g., 'WhisperLargeV3')")
-    ] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
     lang: Annotated[
         Optional[str],
         Field(
             max_length=16,
-            description="Source language hint, e.g. 'en', 'pl'. Auto-detected when unset",
+            description=_LANG_HELP,
         ),
     ] = None,
     include_metadata: Annotated[
@@ -754,12 +758,10 @@ async def video_url_transcription_price(
             description="Video duration in seconds, to quote without supplying a URL. Mutually exclusive with video_url",
         ),
     ] = None,
-    model: Annotated[str, Field(description="Whisper model name")] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
-    lang: Annotated[
-        Optional[str], Field(max_length=16, description="Source language hint, e.g. 'en', 'pl'")
-    ] = None,
+    lang: Annotated[Optional[str], Field(max_length=16, description=_LANG_HELP)] = None,
     include_metadata: Annotated[
         Optional[bool],
         Field(
@@ -1035,16 +1037,14 @@ async def audio_url_transcription(
         ),
     ],
     include_ts: Annotated[bool, Field(description="Include timestamps in transcription")],
-    model: Annotated[
-        str, Field(description="Whisper model (e.g., 'WhisperLargeV3')")
-    ] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
     lang: Annotated[
         Optional[str],
         Field(
             max_length=16,
-            description="Source language hint, e.g. 'en', 'pl'. Auto-detected when unset",
+            description=_LANG_HELP,
         ),
     ] = None,
     include_metadata: Annotated[
@@ -1118,7 +1118,7 @@ async def audio_url_transcription(
 
 async def audio_url_transcription_price(
     include_ts: Annotated[bool, Field(description="Include timestamps")],
-    model: Annotated[str, Field(description="Whisper model name")] = "WhisperLargeV3",
+    model: Annotated[str, Field(description=_MODEL_HELP)] = DEFAULT_TRANSCRIPTION_MODEL,
     audio_url: Annotated[
         Optional[str],
         Field(description="Twitter Spaces URL (required if duration_seconds not provided)"),
@@ -1129,9 +1129,7 @@ async def audio_url_transcription_price(
     ] = None,
     ts_level: Annotated[Optional[TimestampLevel], Field(description=_TS_LEVEL_HELP)] = None,
     diarize: Annotated[Optional[bool], Field(description=_DIARIZE_HELP)] = None,
-    lang: Annotated[
-        Optional[str], Field(max_length=16, description="Source language hint, e.g. 'en', 'pl'")
-    ] = None,
+    lang: Annotated[Optional[str], Field(max_length=16, description=_LANG_HELP)] = None,
     include_metadata: Annotated[
         Optional[bool],
         Field(

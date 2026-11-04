@@ -3,6 +3,21 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.6.2
+
+### Changed
+- Every transcription tool and its price tool (`audio_transcription`, `audio_url_transcription`,
+  `video_file_transcription`, `video_url_transcription`) defaults to `WhisperLargeV3Ct2` instead
+  of `WhisperLargeV3`. WhisperLargeV3 ignores `lang`; Ct2 costs the same, honours `lang`,
+  returns segments and supports `diarize` and word timestamps.
+- `lang` now tells the agent to set it whenever the language is known (auto-detection can pick
+  the wrong one) and warns that it forces the output language, so a wrong code returns a
+  translation instead of a transcript.
+- `server.json`: the API key placeholder shows the current format `sk-dp-<id>-<secret>`
+  (`<id>|<secret>` keys keep working), and the description fits the registry's 100-character
+  limit and names video description and music.
+- README lists TikTok among the `video_url_transcription` sources.
+
 ## 0.6.1
 
 ### Fixed
