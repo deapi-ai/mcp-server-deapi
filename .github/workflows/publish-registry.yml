@@ -1,0 +1,56 @@
+name: Publish to MCP Registry
+
+# A version tag publishes server.json to the official MCP Registry
+# (registry.modelcontextprotocol.io). GitHub's OIDC token proves the run comes from a
+# deapi-ai repository, which is what the io.github.deapi-ai/ namespace requires, so no
+# secret is stored. Run it by hand on main to publish the server.json that is there.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-registry
+  cancel-in-progress: false
+
+env:
+  MCP_PUBLISHER_VERSION: v1.8.7
+  # From registry_1.8.7_checksums.txt of the same release.
+  MCP_PUBLISHER_SHA256: 00b21004149a4ce66f0782508ae4a2bce67d1bea395a8da0bd8028159fb59579
+
+jobs:
+  publish:
+    name: publish server.json
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: server.json version matches the tag
+        if: github.ref_type == 'tag'
+        run: |
+          have="$(jq -r .version server.json)"
+          if [ "$have" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error::server.json has version $have, the tag is $GITHUB_REF_NAME"
+            exit 1
+          fi
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Validate
+        run: ./mcp-publisher validate
+      - name: Log in with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish
+        run: ./mcp-publisher publish
