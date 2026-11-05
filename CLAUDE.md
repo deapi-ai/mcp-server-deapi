@@ -134,6 +134,9 @@ MCP_GRACEFUL_SHUTDOWN_SECONDS=930
 1. Bump the version in `pyproject.toml` and `server.json`, then run `uv lock`.
 2. Add the release to `CHANGELOG.md`.
 3. Merge to `main`, then tag `vX.Y.Z` (annotated) on the merge commit.
+4. Pushing the tag runs `.github/workflows/publish-registry.yml`, which publishes `server.json`
+   to the MCP Registry (it fails if the `server.json` version differs from the tag). Rerun it
+   from the Actions tab on `main` if a publish needs repeating.
 
 This repository is public. Commits, tests, fixtures and docs carry no infrastructure values
 (real hosts, IPs, usernames, keys): use `example.com`-style placeholders. Security reports go
