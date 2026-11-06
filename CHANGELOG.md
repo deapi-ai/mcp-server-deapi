@@ -3,6 +3,13 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.6.3
+
+### Fixed
+- The links to the deAPI API key page (README, `AUTH.md` and the `server.json` key description
+  shown in the MCP Registry) pointed to a page that does not exist. They now go to
+  https://app.deapi.ai/settings/api-keys.
+
 ## 0.6.2
 
 ### Changed

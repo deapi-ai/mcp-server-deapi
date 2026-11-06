@@ -86,7 +86,8 @@ Generation parameters such as `width`, `height`, `steps`, `frames` and `fps` def
 - `uv`, `pip`, or `conda` for package management
 
 **For a deAPI account:**
-- Sign up at [deapi.ai](https://deapi.ai/settings/api-keys) and get your API token
+- Sign up at [app.deapi.ai](https://app.deapi.ai/register) and create an API token at
+  [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys)
 
 ### Setup
 
@@ -160,7 +161,7 @@ See the [Remote Deployment](#remote-deployment) section for production deploymen
 
 Both Claude Desktop and Claude.ai support MCP connectors with built-in OAuth authentication.
 
-1. Get your deAPI token from [deapi.ai](https://deapi.ai/settings/api-keys)
+1. Get your deAPI token from [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys)
 2. In Claude Desktop or Claude.ai, go to **Settings → Connectors → Add Connector**
 3. Fill in the connector details:
 
