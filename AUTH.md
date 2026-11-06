@@ -63,7 +63,7 @@ The diagram below shows the Client Credentials grant, the simplest to follow. Co
 
 ### Step 1: Get Your deAPI Token
 
-Visit [deapi.ai/settings/api-keys](https://deapi.ai/settings/api-keys) and create an API token.
+Visit [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys) and create an API token.
 
 ### Step 2: Configure Custom Connector
 
