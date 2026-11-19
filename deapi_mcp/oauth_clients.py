@@ -105,8 +105,8 @@ _HOSTNAME = re.compile(
 
 
 def _plain_host(host: Optional[str]) -> bool:
-    """An ASCII DNS name or an IP address literal."""
-    if not host:
+    """An ASCII DNS name or an IP address literal (no IPv6 zone: it takes any text)."""
+    if not host or "%" in host:
         return False
     if _HOSTNAME.fullmatch(host):
         return True
@@ -296,6 +296,9 @@ def decode_dcr_client_id(client_id: str) -> Optional[OAuthClient]:
         uris = tuple(str(u) for u in data["r"])
     except (ValueError, KeyError, TypeError, RecursionError):
         return None
+    # Issued by an older version under looser rules: such a client registers again
+    if not uris or not all(valid_redirect_uri(u) for u in uris):
+        return None
     return OAuthClient(client_id, "dcr", name, uris)
 
 
@@ -373,7 +376,10 @@ _cimd_failures: "OrderedDict[str, float]" = OrderedDict()
 # How long a fetch may wait for a free slot before the client is refused for now.
 CIMD_SLOT_WAIT_SECONDS = 2.0
 _cimd_fetches: Optional[tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = None
-_site_fetches: dict[str, int] = {}
+# Per site: its semaphore and how many fetches hold or wait for it (dropped at zero).
+_site_fetches: dict[str, tuple[asyncio.Semaphore, int]] = {}
+# One fetch per client_id at a time; everyone asking meanwhile shares its answer.
+_cimd_inflight: "dict[str, asyncio.Future[Optional[OAuthClient]]]" = {}
 
 
 def _site(client_id: str) -> str:
@@ -401,9 +407,11 @@ async def fetch_cimd_client(client_id: str) -> Optional[OAuthClient]:
     """The client described at ``client_id``, or None when it cannot be used.
 
     Bounded so it cannot be turned into a request reflector: one fetch per URL per
-    ``CIMD_FAILURE_TTL`` after a failure, ``CIMD_MAX_CONCURRENT_FETCHES`` at once (at most
-    ``CIMD_MAX_FETCHES_PER_SITE`` of them for one site), and the whole fetch (not each
-    read) within ``CIMD_TIMEOUT_SECONDS``.
+    ``CIMD_FAILURE_TTL`` after a failure, one fetch per URL at a time (concurrent callers
+    share it), ``CIMD_MAX_CONCURRENT_FETCHES`` at once (at most
+    ``CIMD_MAX_FETCHES_PER_SITE`` of them for one site, each waiting up to
+    ``CIMD_SLOT_WAIT_SECONDS`` for a slot), and the whole fetch (not each read) within
+    ``CIMD_TIMEOUT_SECONDS``.
     """
     cached = _cimd_cache.get(client_id)
     if cached is not None and cached[1] > time.monotonic():
@@ -412,13 +420,55 @@ async def fetch_cimd_client(client_id: str) -> Optional[OAuthClient]:
     failed_until = _cimd_failures.get(client_id)
     if failed_until is not None and failed_until > time.monotonic():
         return None
+    fetch = _cimd_inflight.get(client_id)
+    if fetch is None:
+        fetch = asyncio.ensure_future(_load_cimd_client(client_id))
+        _cimd_inflight[client_id] = fetch
+
+        def _done(future: "asyncio.Future[Optional[OAuthClient]]") -> None:
+            if _cimd_inflight.get(client_id) is future:
+                del _cimd_inflight[client_id]
+
+        fetch.add_done_callback(_done)
+    # One caller going away must not cancel the fetch the others wait on
+    return await asyncio.shield(fetch)
+
+
+async def _acquire_site(site: str) -> Optional[asyncio.Semaphore]:
+    """A fetch slot for ``site``, waiting up to ``CIMD_SLOT_WAIT_SECONDS``; None if none."""
+    semaphore, users = _site_fetches.get(site, (None, 0))
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(CIMD_MAX_FETCHES_PER_SITE)
+    _site_fetches[site] = (semaphore, users + 1)
+    try:
+        await asyncio.wait_for(semaphore.acquire(), CIMD_SLOT_WAIT_SECONDS)
+        return semaphore
+    except asyncio.TimeoutError:
+        _release_site(site, None)
+        return None
+
+
+def _release_site(site: str, semaphore: Optional[asyncio.Semaphore]) -> None:
+    if semaphore is not None:
+        semaphore.release()
+    entry = _site_fetches.get(site)
+    if entry is None:
+        return
+    if entry[1] <= 1:
+        del _site_fetches[site]
+    else:
+        _site_fetches[site] = (entry[0], entry[1] - 1)
+
+
+async def _load_cimd_client(client_id: str) -> Optional[OAuthClient]:
     site = _site(client_id)
-    if _site_fetches.get(site, 0) >= CIMD_MAX_FETCHES_PER_SITE:
+    site_slot = await _acquire_site(site)
+    if site_slot is None:
         logger.warning(
-            "Client metadata fetches for one site at capacity; refusing %r", client_id[:80]
+            "Client metadata fetches for one site at capacity; refusing %r for now",
+            client_id[:80],
         )
         return None
-    _site_fetches[site] = _site_fetches.get(site, 0) + 1
     try:
         slots = _fetch_slots()
         try:
@@ -437,11 +487,7 @@ async def fetch_cimd_client(client_id: str) -> Optional[OAuthClient]:
         _note_failure(client_id)
         return None
     finally:
-        remaining = _site_fetches.get(site, 1) - 1
-        if remaining > 0:
-            _site_fetches[site] = remaining
-        else:
-            _site_fetches.pop(site, None)
+        _release_site(site, site_slot)
     try:
         data = json.loads(body)
         if not isinstance(data, dict) or data.get("client_id") != client_id:
@@ -494,3 +540,4 @@ def clear_cimd_cache() -> None:
     _cimd_cache.clear()
     _cimd_failures.clear()
     _site_fetches.clear()
+    _cimd_inflight.clear()

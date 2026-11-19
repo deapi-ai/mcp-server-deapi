@@ -2,6 +2,7 @@
 
 import asyncio
 import gzip
+import json
 import logging
 import threading
 import time
@@ -329,6 +330,8 @@ def test_a_sign_in_code_for_a_key_refused_since_gets_no_token(app_client, api):
         "https://сlaude.ai/cb",  # Cyrillic look-alike
         "https://exé.example/cb",  # Latin-1, still not a DNS name
         "https://claude.ai@evil.example/cb",  # userinfo
+        "https://[fe80::1%25x;sandbox]/cb",  # a zone id takes any text
+        "https://[fe80::1%25\u0430pple.com]/cb",
     ],
 )
 def test_redirect_hosts_must_be_plain_dns_names(uri):
@@ -348,6 +351,11 @@ def test_redirect_hosts_must_be_plain_dns_names(uri):
 )
 def test_ordinary_redirects_still_pass(uri):
     assert oauth_clients.valid_redirect_uri(uri)
+
+
+def test_a_dcr_client_id_with_a_now_refused_redirect_is_void(app_client):
+    client_id = oauth_clients.encode_dcr_client_id("Old", ("https://a.example;sandbox/cb",), 1)
+    assert oauth_clients.decode_dcr_client_id(client_id) is None
 
 
 def test_registration_refuses_a_redirect_that_would_break_the_csp(app_client, api):
@@ -385,6 +393,44 @@ async def test_one_site_cannot_take_every_metadata_fetch_slot(monkeypatch):
         assert len(started) == oauth_clients.CIMD_MAX_FETCHES_PER_SITE
         gate.set()
         assert await asyncio.gather(*tasks) == [None] * 10
+    finally:
+        oauth_clients.clear_cimd_cache()
+
+
+async def test_many_people_signing_in_with_one_client_share_one_fetch(monkeypatch):
+    oauth_clients.clear_cimd_cache()
+    url = "https://vscode.example/oauth/client-metadata.json"
+    fetched = []
+
+    async def document(u):
+        fetched.append(u)
+        await asyncio.sleep(0.05)
+        body = {"client_id": url, "client_name": "Editor", "redirect_uris": [REDIRECT]}
+        return json.dumps(body).encode(), "application/json"
+
+    monkeypatch.setattr(oauth_clients, "_fetch_metadata", document)
+    try:
+        clients = await asyncio.gather(*[oauth_clients.fetch_cimd_client(url) for _ in range(12)])
+        assert all(c is not None and c.name == "Editor" for c in clients)
+        assert len(fetched) == 1
+    finally:
+        oauth_clients.clear_cimd_cache()
+
+
+async def test_a_busy_site_waits_for_a_slot_instead_of_refusing(monkeypatch):
+    oauth_clients.clear_cimd_cache()
+
+    async def document(u):
+        await asyncio.sleep(0.05)
+        body = {"client_id": u, "client_name": "App", "redirect_uris": [REDIRECT]}
+        return json.dumps(body).encode(), "application/json"
+
+    monkeypatch.setattr(oauth_clients, "_fetch_metadata", document)
+    try:
+        urls = [f"https://u{i}.pages.example/client.json" for i in range(8)]
+        clients = await asyncio.gather(*[oauth_clients.fetch_cimd_client(u) for u in urls])
+        assert all(c is not None for c in clients)
+        assert oauth_clients._site_fetches == {}
     finally:
         oauth_clients.clear_cimd_cache()
 

@@ -30,12 +30,15 @@ that worked before, except that media uploads now stop at deAPI's own limits.
   literal, without user info; the same holds for a metadata document's host. A `;` in the
   host could add a directive to the sign-in page's CSP header, and a host outside Latin-1
   failed with a 500. Look-alike hosts in other scripts cannot appear on the sign-in screen.
+  An IPv6 zone (`%...`) is refused too. A dynamically registered `client_id` issued by 0.7.0
+  with a redirect URI these rules now refuse stops working; that client registers again.
 - Wrong-key limit on the sign-in screen: an attempt is counted before the key is checked and
   given back when the key is good, so concurrent attempts no longer get past the limit; an
   IPv6 address counts as its /64. The sign-in screen has key-check slots of its own, so a
   flood of keys on `/token` or `/mcp` cannot make it answer "could not be checked".
-- At most 4 metadata documents are fetched at once for one site, so one party's slow hosts
-  cannot take every fetch slot.
+- Metadata documents: one fetch per `client_id` at a time (everyone signing in with that
+  client meanwhile shares it), and at most 4 at once for one site (waiting up to 2 seconds
+  for a slot), so one party's slow hosts cannot take every fetch slot.
 - Only requests to `/mcp` have their bearer token checked with deAPI. Authentication runs on
   every route, so a token sent elsewhere (a metrics scraper's, for example) used to be sent
   to deAPI as if it were an API key.
@@ -54,6 +57,15 @@ that worked before, except that media uploads now stop at deAPI's own limits.
   Read it with `config.secret_value()`.
 - A warning at startup when `DEAPI_JWT_SECRET_KEY` is shorter than 32 characters or an
   example value.
+
+### Upgrade notes
+- Sign-in codes move to their own Redis keys (`<prefix>signin_oauth_code:*`). During a
+  rolling upgrade from 0.7.0, a sign-in finished on one version and redeemed on the other
+  fails with `invalid_grant`; the client signs in again. Codes live 10 minutes.
+- A media URL whose server sends the body compressed (for example an object stored with
+  `Content-Encoding: gzip`) is refused instead of inflated.
+- Redirect hosts with an underscore are refused: a CSP host source cannot name them, so the
+  sign-in form could never have redirected there anyway.
 
 ## 0.7.0
 
