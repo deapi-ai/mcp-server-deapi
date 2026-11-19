@@ -85,6 +85,15 @@ class Settings(BaseSettings):
         description="Seconds one tool call waits for its job before returning the job_id to resume with",
     )
 
+    # Plain API key check (deapi_mcp/key_verifier.py). A key sent as a bearer token
+    # or as the OAuth client_secret is checked once against the API (cached), so a
+    # wrong key is refused with 401 at connect instead of failing every tool call.
+    # An API outage lets keys through, as without the check.
+    verify_api_keys: bool = Field(
+        default=True,
+        description="Check plain deAPI API keys against the API before accepting them",
+    )
+
     # Tool Description Enrichment
     enrich_tool_descriptions: bool = Field(
         default=True,

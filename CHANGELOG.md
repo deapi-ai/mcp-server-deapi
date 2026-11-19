@@ -3,6 +3,28 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.7.0
+
+### Added
+- A plain deAPI API key is checked against the API before it is accepted
+  (`deapi_mcp/key_verifier.py`). Until now any string that was not a JWT passed as a bearer
+  token: `initialize` and `tools/list` succeeded and every tool call then failed with
+  `success: false` and "Unauthenticated.", which gave a client no reason to ask the user for
+  a new key. Now:
+  - `Authorization: Bearer <key>` with a key the API refuses gets `401`
+    (`WWW-Authenticate: Bearer error="invalid_token"`), already at `initialize`;
+  - `POST /token` answers `401 invalid_client` when the `client_secret` (the key) is refused,
+    for both the `authorization_code` and `client_credentials` grants.
+
+  The check is one free `GET /api/v2/account/balance` with the key. The verdict is cached
+  under an HMAC of the key (accepted 10 minutes, refused 60 seconds, at most 10,000 keys) and
+  concurrent requests with one key share a single check. Only a `401` refuses a key: when the
+  API is down, slow (5-second limit) or rate-limiting, the key is let through as before. JWTs,
+  refresh tokens and the OAuth flow with a valid key are unchanged.
+- `DEAPI_VERIFY_API_KEYS` (default `true`) turns the check off.
+- Authentication failures report the new reason `invalid_key` to the auth-rejected sink
+  (`observability.set_auth_rejected_sink`).
+
 ## 0.6.3
 
 ### Fixed

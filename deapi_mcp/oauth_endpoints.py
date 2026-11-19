@@ -37,6 +37,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from . import auth_code_store
 from .auth_code_store import AUTHORIZATION_CODE_MAX_ENTRIES, AuthCodeStoreUnavailable
 from .config import settings
+from .key_verifier import is_api_key_rejected
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +570,18 @@ async def token_endpoint(request: Request) -> JSONResponse:
             )
 
         deapi_token = client_secret
+
+    # The secret IS the deAPI key: ask the API once whether it knows it, so a wrong
+    # key fails here, where the client can show it, not on every later tool call.
+    if await is_api_key_rejected(deapi_token):
+        logger.warning("Token request with a client_secret deAPI rejects")
+        return JSONResponse(
+            {
+                "error": "invalid_client",
+                "error_description": "client_secret was rejected by deAPI (invalid API key)",
+            },
+            status_code=401,
+        )
 
     # Create JWT containing the Deapi token and refresh token
     try:

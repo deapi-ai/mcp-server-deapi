@@ -9,6 +9,21 @@ import deapi_mcp.oauth_endpoints as oauth_endpoints
 from deapi_mcp.config import settings
 
 
+@pytest.fixture(autouse=True)
+def _no_live_key_check(monkeypatch):
+    """Tests carry made-up keys and must never ask the real API about them.
+
+    The API key check is off by default in tests; the tests of the check turn it on
+    and stub the probe (tests/test_key_verifier.py, tests/test_auth_matrix.py).
+    """
+    from deapi_mcp import key_verifier
+
+    monkeypatch.setattr(settings, "verify_api_keys", False)
+    key_verifier.set_key_verifier(None)
+    yield
+    key_verifier.set_key_verifier(None)
+
+
 @pytest.fixture(scope="session")
 def app_client():
     """The full app. build_app() mutates the module-level mcp, so it is built once per session."""

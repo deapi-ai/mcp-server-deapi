@@ -1,0 +1,50 @@
+# Auth end-to-end run: the server image against a fake deAPI API.
+#
+#   docker compose -f tests/e2e/docker-compose.yml up --build --exit-code-from e2e
+#   docker compose -f tests/e2e/docker-compose.yml down
+#
+# Every value here is a test placeholder; nothing reaches the real API.
+x-e2e-env: &e2e-env
+  E2E_GOOD_KEY: sk-dp-e2e-good-0000000000000000
+
+services:
+  mock-deapi:
+    build: ../..
+    image: deapi-mcp-e2e
+    command: ["python", "/e2e/mock_deapi.py"]
+    environment:
+      <<: *e2e-env
+    volumes:
+      - ./:/e2e:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:9000/health"]
+      interval: 2s
+      retries: 15
+
+  mcp:
+    image: deapi-mcp-e2e
+    depends_on:
+      mock-deapi:
+        condition: service_healthy
+    environment:
+      DEAPI_API_BASE_URL: http://mock-deapi:9000
+      DEAPI_JWT_SECRET_KEY: e2e-jwt-secret-not-for-production-0000000000
+      PUBLIC_BASE_URL: http://mcp:8000
+      DEAPI_VERIFY_API_KEYS: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8000/health"]
+      interval: 2s
+      retries: 15
+
+  e2e:
+    image: deapi-mcp-e2e
+    depends_on:
+      mcp:
+        condition: service_healthy
+    command: ["python", "/e2e/auth_e2e.py"]
+    environment:
+      <<: *e2e-env
+      E2E_MCP_URL: http://mcp:8000
+      E2E_MOCK_URL: http://mock-deapi:9000
+    volumes:
+      - ./:/e2e:ro

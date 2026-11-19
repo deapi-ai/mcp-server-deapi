@@ -294,6 +294,9 @@ DEAPI_MAX_RETRIES=3
 # Seconds one tool call waits before returning done=false and the job_id
 DEAPI_TOOL_MAX_WAIT=45.0
 
+# Check a plain API key against deAPI at connect (cached; an API outage lets keys through)
+DEAPI_VERIFY_API_KEYS=true
+
 # Polling Configuration (override defaults)
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
 DEAPI_POLLING_AUDIO__MAX_DELAY=5.0
@@ -387,6 +390,12 @@ pytest
 Run smoke tests (requires a running server):
 ```bash
 python tests/smoke_test.py
+```
+
+Run the authentication end-to-end matrix in Docker (server image against a fake deAPI API):
+```bash
+docker compose -f tests/e2e/docker-compose.yml up --build --exit-code-from e2e
+docker compose -f tests/e2e/docker-compose.yml down
 ```
 
 ### Code Formatting

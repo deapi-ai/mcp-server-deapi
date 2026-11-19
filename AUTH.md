@@ -229,6 +229,8 @@ The OAuth implementation is fully backward compatible. You can use:
 2. **Direct Bearer token** (backward compatible):
    - Use `Authorization: Bearer YOUR_DEAPI_TOKEN` header directly
    - No OAuth flow needed
+   - The key is checked once against deAPI (see [API key check](#api-key-check)); a key deAPI
+     refuses gets `401` at `initialize`
 
 Both methods work simultaneously!
 
@@ -251,6 +253,27 @@ Content-Type: application/x-www-form-urlencoded
 grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 ```
 
+### API Key Check
+
+A plain deAPI API key has no signature the server could check, so it is checked with deAPI
+instead: one free `GET /api/v2/account/balance` with the key, wherever a key first reaches
+the server:
+
+- `Authorization: Bearer <deAPI key>` on an MCP request: a refused key gets `401` with
+  `WWW-Authenticate: Bearer error="invalid_token"`, so the client asks for a new key at once
+  instead of every tool call failing later with an API error;
+- `client_secret` on `POST /token` (`authorization_code` and `client_credentials` grants): a
+  refused key gets `401 invalid_client`. An access token issued afterwards is trusted by its
+  signature and is not checked again.
+
+The verdict is cached per key, under an HMAC of the key with a per-process random secret (the
+key itself is never stored or logged): an accepted key for 10 minutes, a refused one for 60
+seconds. Concurrent requests with the same key share one check.
+
+Only an explicit `401` from deAPI refuses a key. If deAPI is down, slow (5-second limit) or
+rate-limiting, the key is let through, as if the check did not exist, and that outcome is
+cached for 15 seconds. Set `DEAPI_VERIFY_API_KEYS=false` to turn the check off.
+
 ### JWT Signing Key
 
 - **Development** (loopback only): Ephemeral key generated at startup (tokens invalid after restart)
@@ -262,7 +285,8 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 - No server-side token storage (authorization codes are kept for at most 10 minutes, then burnt on use)
 - JWT contains the deAPI token (Fernet-encrypted within the JWT payload)
 - Server verifies JWT signature on each request
-- deAPI API validates the embedded token
+- A plain key is checked with deAPI once and the verdict cached (see above)
+- deAPI API validates the embedded token on every call
 
 ### Client ID Validation
 
@@ -287,6 +311,16 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 
 - Token too short (< 10 characters)
 - Check that you're using your actual deAPI API token
+
+### "client_secret was rejected by deAPI (invalid API key)"
+
+- deAPI does not know the key, or it was revoked
+- Create or copy a key at https://app.deapi.ai/settings/api-keys and connect again
+
+### `401 invalid_token` with a plain Bearer key
+
+- deAPI refused the key at connect (see [API key check](#api-key-check))
+- A key fixed or re-enabled on the deAPI side is accepted again within 60 seconds
 
 ### Server logs don't show OAuth endpoints
 

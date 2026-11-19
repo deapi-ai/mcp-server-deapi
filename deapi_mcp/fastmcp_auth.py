@@ -10,6 +10,7 @@ from fastmcp.server.auth import AccessToken, AuthProvider
 from starlette.routing import Route
 
 from .auth import current_deapi_token
+from .key_verifier import is_api_key_rejected
 from .oauth_endpoints import (
     decode_jwt,
     decrypt_token,
@@ -25,7 +26,8 @@ class DeapiAuthProvider(AuthProvider):
     1. Accepts Bearer tokens (JWT or plain deAPI tokens)
     2. Extracts deAPI token from JWT if applicable
     3. Stores it in context for tools to use
-    4. Validates tokens by checking JWT signature (not deAPI token validity)
+    4. Validates a JWT by its signature, and a plain key by asking the API once
+       (cached; see key_verifier.py). An API outage lets a plain key through.
     """
 
     def __init__(self, base_url: str | None = None):
@@ -98,12 +100,17 @@ class DeapiAuthProvider(AuthProvider):
                     logger.error("Failed to decrypt deapi token from JWT")
                     record_auth_rejected("bad_claims")
                     return None
+            elif await is_api_key_rejected(token):
+                # A plain key carries no signature, so the API is asked once whether
+                # it knows the key. A refusal here makes the client prompt for a new
+                # key now, instead of every tool call failing later.
+                logger.warning("Plain API key rejected by deAPI")
+                record_auth_rejected("invalid_key")
+                return None
 
             # Store deAPI token in context for tools to access
             current_deapi_token.set(deapi_token)
 
-            # Return AccessToken - we don't validate the deAPI token here
-            # Validation happens when calling deAPI
             return AccessToken(
                 client_id="deapi-mcp",
                 token=deapi_token,
