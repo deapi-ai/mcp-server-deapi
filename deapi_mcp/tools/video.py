@@ -8,6 +8,8 @@ from ..deapi_client import DeapiAPIError, get_client
 from ..middleware import ensure_model_cache
 from ..polling_manager import PollingManager
 from ..utils import (
+    MAX_MEDIA_INPUTS,
+    check_upload_budget,
     form_bool,
     prepare_audio_upload_async,
     prepare_image_upload_async,
@@ -43,19 +45,22 @@ async def image_to_video(
     ref_images: Annotated[
         Optional[List[str]],
         Field(
-            description="Reference images (URL, data URI or base64), in order: ref_images[0] is <Picture 1> in the prompt, ref_images[1] is <Picture 2>, and so on. Each within a 1:4-4:1 aspect ratio. Only for models listing image refs in the model list; replaces first_frame_image"
+            max_length=MAX_MEDIA_INPUTS,
+            description="Reference images (URL, data URI or base64), in order: ref_images[0] is <Picture 1> in the prompt, ref_images[1] is <Picture 2>, and so on. Each within a 1:4-4:1 aspect ratio. Only for models listing image refs in the model list; replaces first_frame_image",
         ),
     ] = None,
     ref_videos: Annotated[
         Optional[List[str]],
         Field(
-            description="Reference videos (URL, data URI or base64), in order: ref_videos[0] is <Video 1>. Usually at most one, a few seconds long (see the model list). A video with a soundtrack takes <Audio 1> and shifts every ref_audios label by one"
+            max_length=MAX_MEDIA_INPUTS,
+            description="Reference videos (URL, data URI or base64), in order: ref_videos[0] is <Video 1>. Usually at most one, a few seconds long (see the model list). A video with a soundtrack takes <Audio 1> and shifts every ref_audios label by one",
         ),
     ] = None,
     ref_audios: Annotated[
         Optional[List[str]],
         Field(
-            description="Reference audio clips (URL, data URI or base64), in order: ref_audios[0] is <Audio 1> (or <Audio 2> after a sounded reference video). Needs at least one ref_images or ref_videos entry"
+            max_length=MAX_MEDIA_INPUTS,
+            description="Reference audio clips (URL, data URI or base64), in order: ref_audios[0] is <Audio 1> (or <Audio 2> after a sounded reference video). Needs at least one ref_images or ref_videos entry",
         ),
     ] = None,
     width: Annotated[
@@ -168,12 +173,16 @@ async def image_to_video(
                 )
             if last_frame_image:
                 files.append(await prepare_image_upload_async(last_frame_image, "last_frame_image"))
+            check_upload_budget(files)
             for item in ref_images or []:
                 files.append(("ref_images[]", (await prepare_image_upload_async(item))[1]))
+                check_upload_budget(files)
             for item in ref_videos or []:
                 files.append(("ref_videos[]", (await prepare_video_upload_async(item))[1]))
+                check_upload_budget(files)
             for item in ref_audios or []:
                 files.append(("ref_audios[]", (await prepare_audio_upload_async(item))[1]))
+                check_upload_budget(files)
 
             # Anything unset comes from the model card: the API requires these
             # fields and validates them against the card, and no fixed number

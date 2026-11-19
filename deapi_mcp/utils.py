@@ -7,11 +7,12 @@ import ipaddress
 import logging
 import re
 import socket
-from typing import Dict, Optional, Tuple, cast
+from typing import Any, Dict, Optional, Sequence, Tuple, cast
 from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from .config import settings
 from .observability import note_input_error
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,8 @@ def is_url(value: str) -> bool:
 # connection to a validated IP (so DNS rebinding cannot swap it between the
 # check and the connect), refuse auto-redirects and re-validate each hop, cap
 # the body, and return one generic error so nothing becomes a status oracle.
+# The body is read raw and must arrive uncompressed: httpx would otherwise inflate
+# a gzip body a whole network chunk at a time, before the cap could see it.
 
 _FETCH_GENERIC_ERROR = "Could not retrieve the file from the provided URL."
 _MAX_REDIRECTS = 3
@@ -342,10 +345,24 @@ _CGNAT_RANGE = ipaddress.ip_network("100.64.0.0/10")
 # Never-media content types; refused so the fetchers cannot pull internal pages.
 _REFUSED_CONTENT_TYPES = ("text/", "application/json", "application/xml")
 
-# Per-type body caps (bytes): generous but bounded, so one request cannot OOM a pod.
-MAX_IMAGE_BYTES = 25 * 1024 * 1024
-MAX_AUDIO_BYTES = 100 * 1024 * 1024
-MAX_VIDEO_BYTES = 300 * 1024 * 1024
+# Per-type body caps (bytes): deAPI's own upload limits, so nothing the API would refuse
+# is ever held in memory. Each is also capped by DEAPI_MAX_UPLOAD_MB (``upload_cap``).
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_AUDIO_BYTES = 20 * 1024 * 1024
+MAX_VIDEO_BYTES = 50 * 1024 * 1024
+# Most media inputs one list parameter takes; above any model's own limit (deAPI caps
+# reference files at 12 in all).
+MAX_MEDIA_INPUTS = 16
+
+
+def max_upload_bytes() -> int:
+    """What one tool call may upload in all (``DEAPI_MAX_UPLOAD_MB``)."""
+    return settings.max_upload_mb * 1024 * 1024
+
+
+def upload_cap(type_cap: int) -> int:
+    """A per-type cap, never above the per-call total."""
+    return min(type_cap, max_upload_bytes())
 
 
 def _ip_is_public(ip_str: str) -> bool:
@@ -354,8 +371,13 @@ def _ip_is_public(ip_str: str) -> bool:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.is_site_local:
+            return False
+        # An IPv4 address carried inside IPv6 (mapped, 6to4, Teredo) is judged as itself
+        embedded = ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
+        if embedded is not None:
+            ip = embedded
     if ip.version == 4 and ip in _CGNAT_RANGE:
         return False
     return not (
@@ -386,6 +408,7 @@ async def safe_fetch(
     *,
     max_bytes: int,
     timeout: float,
+    total_timeout: Optional[float] = None,
     max_redirects: int = _MAX_REDIRECTS,
     schemes: Tuple[str, ...] = ("http", "https"),
     refused_content_types: Tuple[str, ...] = _REFUSED_CONTENT_TYPES,
@@ -399,9 +422,43 @@ async def safe_fetch(
     single generic ``InputError`` on any failure. The defaults suit media; a
     caller fetching a small JSON document narrows them (no redirects, https only,
     JSON allowed).
+
+    ``timeout`` bounds each network operation; ``total_timeout`` (default four times
+    ``timeout``) bounds the whole fetch, so a server trickling bytes cannot hold it open.
     """
+    deadline = total_timeout if total_timeout is not None else timeout * 4
+    try:
+        async with asyncio.timeout(deadline):
+            return await _safe_fetch(
+                url,
+                max_bytes=max_bytes,
+                timeout=timeout,
+                max_redirects=max_redirects,
+                schemes=schemes,
+                refused_content_types=refused_content_types,
+                accept=accept,
+                extra_headers=extra_headers,
+            )
+    except TimeoutError:
+        raise InputError(_FETCH_GENERIC_ERROR)
+
+
+async def _safe_fetch(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout: float,
+    max_redirects: int,
+    schemes: Tuple[str, ...],
+    refused_content_types: Tuple[str, ...],
+    accept: str,
+    extra_headers: Optional[Dict[str, str]],
+) -> Tuple[bytes, str]:
     current = url
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+    # trust_env=False: no proxy from the environment, so the pinned address is what we reach
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=False, trust_env=False
+    ) as client:
         for _ in range(max_redirects + 1):
             parts = urlsplit(current)
             if parts.scheme not in schemes:
@@ -418,7 +475,12 @@ async def safe_fetch(
             request = client.build_request(
                 "GET",
                 pinned_url,
-                headers={"Host": authority, "Accept": accept, **(extra_headers or {})},
+                headers={
+                    **(extra_headers or {}),
+                    "Host": authority,
+                    "Accept": accept,
+                    "Accept-Encoding": "identity",
+                },
                 # Keep TLS SNI and certificate verification bound to the real host
                 # even though we connect to the pinned IP.
                 extensions={"sni_hostname": host},
@@ -439,9 +501,13 @@ async def safe_fetch(
                 content_type = response.headers.get("content-type", "").lower()
                 if refused_content_types and content_type.startswith(refused_content_types):
                     raise InputError(_FETCH_GENERIC_ERROR)
+                # Asked for identity; a compressed body anyway is refused, never inflated
+                encoding = response.headers.get("content-encoding", "identity").strip().lower()
+                if encoding not in ("", "identity"):
+                    raise InputError(_FETCH_GENERIC_ERROR)
                 chunks = []
                 total = 0
-                async for chunk in response.aiter_bytes():
+                async for chunk in response.aiter_raw():
                     total += len(chunk)
                     if total > max_bytes:
                         raise InputError(_FETCH_GENERIC_ERROR)
@@ -460,7 +526,9 @@ async def fetch_image_from_url(url: str, timeout: float = 30.0) -> Tuple[bytes, 
     Fetched through ``safe_fetch``: non-public hosts, redirects onto them,
     oversized bodies and non-media content are refused.
     """
-    content, content_type = await safe_fetch(url, max_bytes=MAX_IMAGE_BYTES, timeout=timeout)
+    content, content_type = await safe_fetch(
+        url, max_bytes=upload_cap(MAX_IMAGE_BYTES), timeout=timeout
+    )
     ext = "png"  # default
     if "jpeg" in content_type or "jpg" in content_type:
         ext = "jpg"
@@ -534,7 +602,9 @@ async def fetch_audio_from_url(url: str, timeout: float = 30.0) -> Tuple[bytes, 
     Raises:
         ValueError: If URL cannot be fetched or is not valid audio
     """
-    content, content_type = await safe_fetch(url, max_bytes=MAX_AUDIO_BYTES, timeout=timeout)
+    content, content_type = await safe_fetch(
+        url, max_bytes=upload_cap(MAX_AUDIO_BYTES), timeout=timeout
+    )
     ext = "mp3"  # default
     if "wav" in content_type:
         ext = "wav"
@@ -604,7 +674,9 @@ async def fetch_video_from_url(url: str, timeout: float = 60.0) -> Tuple[bytes, 
     Raises:
         ValueError: If URL cannot be fetched or is not valid video
     """
-    content, content_type = await safe_fetch(url, max_bytes=MAX_VIDEO_BYTES, timeout=timeout)
+    content, content_type = await safe_fetch(
+        url, max_bytes=upload_cap(MAX_VIDEO_BYTES), timeout=timeout
+    )
     ext = "mp4"  # default
     if "webm" in content_type:
         ext = "webm"
@@ -664,3 +736,26 @@ async def prepare_video_upload_async(
     file_obj = io.BytesIO(video_bytes)
 
     return field_name, (filename, file_obj, mime_type)
+
+
+def _upload_size(body: Any) -> int:
+    """Bytes in one upload: raw bytes or an in-memory file."""
+    if isinstance(body, (bytes, bytearray)):
+        return len(body)
+    if isinstance(body, io.BytesIO):
+        return len(body.getbuffer())
+    return 0
+
+
+def check_upload_budget(files: Sequence[Tuple[str, Tuple[str, Any, str]]]) -> None:
+    """Refuse a call whose media inputs add up to more than ``DEAPI_MAX_UPLOAD_MB``.
+
+    Call it after each input is added, so a long list stops at the first one over.
+    """
+    limit = max_upload_bytes()
+    total = sum(_upload_size(item[1][1]) for item in files)
+    if total > limit:
+        raise InputError(
+            f"The media inputs add up to more than {limit // (1024 * 1024)} MB, "
+            "the most one request takes; send fewer or smaller files."
+        )

@@ -278,7 +278,11 @@ seconds. Concurrent requests with the same key share one check.
 
 Only an explicit `401` from deAPI refuses a key. If deAPI is down, slow (5-second limit) or
 rate-limiting, the key is let through, as if the check did not exist, and that outcome is
-cached for 15 seconds. Set `DEAPI_VERIFY_API_KEYS=false` to turn the check off.
+cached for 15 seconds. A key that is not printable ASCII is refused without asking. At most
+32 checks run at once (beyond that a key is let through unchecked), plus 8 kept for the
+sign-in screen, so a flood of keys elsewhere never stops a person from signing in. Only
+requests to `/mcp` are checked: a bearer token sent to another route (a metrics scraper's,
+say) never reaches deAPI. Set `DEAPI_VERIFY_API_KEYS=false` to turn the check off.
 
 ### Public Clients and the Sign-in Screen
 
@@ -288,14 +292,16 @@ themselves) are public clients. They get a client ID in one of two ways, both ad
 
 - **Dynamic client registration** (`POST /register`, RFC 7591). Only public clients
   (`token_endpoint_auth_method: none`) with the `authorization_code` / `refresh_token` grants
-  are accepted, with 1-5 redirect URIs: `https`, `http` on loopback only, or a native app's
+  are accepted, with 1-5 redirect URIs: `https` on a plain DNS name (ASCII; an
+  internationalized name in its `xn--` form) without user info, `http` on loopback only, or a native app's
   private-use scheme (reverse-domain form like `com.example.app:`, or a known client's own
   such as `cursor:`; OS protocol handlers are refused). The returned `client_id` is the
   registration itself, signed with a key derived from `DEAPI_JWT_SECRET_KEY`: nothing is
   stored, and any replica can verify it. Bodies are limited to 8 kB.
 - **Client ID metadata documents.** An `https` `client_id` with a path is fetched as JSON
-  (public addresses only, no redirects, 5 kB, 5 seconds in total, at most 16 at once) and
-  must name itself as `client_id`. A document is reused for 5 minutes; a failed fetch is
+  (public addresses only, no redirects, uncompressed, 5 kB, 5 seconds in total, at most 16
+  at once and 4 for one site) and must name itself as `client_id`. Its host must be a plain
+  DNS name, like a redirect's. A document is reused for 5 minutes; a failed fetch is
   not retried for 1 minute.
 
 For a public client, `GET /authorize` shows a deAPI sign-in screen instead of redirecting at
@@ -309,12 +315,18 @@ key is kept Fernet-encrypted in the 10-minute code record).
 Protections on the screen: the authorization request travels from the page to the form
 inside an HMAC-signed, 10-minute token; a double-submit CSRF cookie (`__Host-`, `Secure`,
 `SameSite=Strict` over https); at most 10 wrong keys per client address in 15 minutes
-(counted in Redis when configured, so shared by every replica); no script, no framing,
+(an IPv6 address counts as its /64; each attempt is counted before the key is checked and
+given back when the key is good, so concurrent attempts cannot get past the limit; counted
+in Redis when configured, so shared by every replica); no script, no framing,
 `Cache-Control: no-store`, and a CSP whose `form-action` allows only this server and the
 client's own redirect target. Set `DEAPI_CLIENT_IP_HEADER` to a header your edge sets and
 clients cannot forge (for example `CF-Connecting-IP` behind Cloudflare); otherwise the
 connection address is used, which a proxy that trusts `X-Forwarded-For` blindly lets the
 client choose.
+
+Codes from the sign-in screen are kept apart from the pre-registered client's (each with
+its own cap of 10,000), so a flood of anonymous `GET /authorize` requests never pushes out
+a code a person has just signed in for.
 
 At `/token`, a public client sends its `client_id` and the PKCE verifier, no secret.
 Authorization codes and refresh tokens are bound to the `client_id` they were issued to.

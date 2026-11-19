@@ -1,7 +1,9 @@
 """HTTP client for deAPI with authentication forwarding and retry logic."""
 
+import http.cookiejar
 from collections.abc import Mapping, Sequence
 from typing import IO, Any, Dict, Optional, Tuple, Union, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -14,7 +16,7 @@ from deapi_sdk._config import ClientConfig
 from deapi_sdk._exceptions import DeapiError as SdkError
 from deapi_sdk._exceptions import NetworkError as SdkNetworkError
 
-from .config import settings
+from .config import secret_value, settings
 from .observability import note_api_error, note_network_error
 from .schemas import (
     BalanceResponse,
@@ -141,10 +143,24 @@ def webhook_payload_fields(
 _shared_http: Optional[httpx.AsyncClient] = None
 
 
+class _NoCookies(http.cookiejar.CookieJar):
+    """A cookie jar that never keeps a cookie."""
+
+    def set_cookie(self, cookie: http.cookiejar.Cookie) -> None:
+        return None
+
+    def extract_cookies(self, response: Any, request: Any) -> None:
+        return None
+
+
 def _shared_http_client() -> httpx.AsyncClient:
     global _shared_http
     if _shared_http is None or _shared_http.is_closed:
-        _shared_http = httpx.AsyncClient(timeout=httpx.Timeout(settings.http_timeout))
+        # No cookie jar: this one client serves every user, so a cookie one user's response
+        # set must never be sent with another user's request
+        _shared_http = httpx.AsyncClient(
+            timeout=httpx.Timeout(settings.http_timeout), cookies=_NoCookies()
+        )
     return _shared_http
 
 
@@ -305,7 +321,7 @@ class DeapiClient:
         if use_internal:
             webhook_fields = {
                 "webhook_url": settings.webhook_receiver_url,
-                "webhook_secret": settings.webhook_secret,
+                "webhook_secret": secret_value(settings.webhook_secret),
             }
 
         if webhook_fields:
@@ -343,7 +359,8 @@ class DeapiClient:
         """
         response_data = await self._request(
             method="GET",
-            endpoint=f"jobs/{job_id}",
+            # Quoted whole: an id is one path segment, never "../" or a query
+            endpoint=f"jobs/{quote(job_id, safe='')}",
         )
         return JobStatusResponse(**response_data)
 

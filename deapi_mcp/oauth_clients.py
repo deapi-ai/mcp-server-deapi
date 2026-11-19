@@ -5,9 +5,9 @@ Two ways a client introduces itself, neither of which needs a client database:
 - **Client ID Metadata Document (CIMD).** The ``client_id`` is an HTTPS URL; the server
   fetches the JSON document there and takes the client's name and redirect URIs from
   it. The document's own ``client_id`` must equal the URL. The fetch is SSRF-safe (public
-  addresses only, pinned IP, no redirects, 5 kB cap) and cached for 5 minutes; failures
-  are never cached. Control of the URL's host is what identifies the client, so the sign-in
-  screen names that host.
+  addresses only, pinned IP, no redirects, 5 kB cap, uncompressed) and cached for 5
+  minutes; a failure is remembered for a minute. Control of the URL's host is what
+  identifies the client, so the sign-in screen names that host.
 - **Dynamic Client Registration (RFC 7591).** ``POST /register`` validates the metadata
   and returns a ``client_id`` that *is* the registration: the metadata plus an HMAC
   under a key derived from ``DEAPI_JWT_SECRET_KEY``. Any replica can verify it, nothing
@@ -56,6 +56,9 @@ MAX_REGISTRATION_BYTES = 8 * 1024
 # Concurrent metadata fetches per process, and how long a failed one is remembered.
 CIMD_MAX_CONCURRENT_FETCHES = 16
 CIMD_FAILURE_TTL = 60
+# Concurrent fetches for one site (the host's last two labels), so one attacker's slow
+# hosts cannot take every slot and lock other clients out.
+CIMD_MAX_FETCHES_PER_SITE = 4
 
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # Native apps' private-use schemes (RFC 8252 §7.1) take reverse-domain form, so they contain
@@ -93,6 +96,25 @@ _INVISIBLE = re.compile(
     "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff]"
 )
 _LETTERS = re.compile(r"[^a-z0-9]")
+# A host name as DNS writes it: ASCII letters, digits and hyphens (an IDN in its xn-- form).
+# Anything else could look like another host on the sign-in screen, or break the CSP
+# header the redirect's origin is written into.
+_HOSTNAME = re.compile(
+    r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\.?"
+)
+
+
+def _plain_host(host: Optional[str]) -> bool:
+    """An ASCII DNS name or an IP address literal."""
+    if not host:
+        return False
+    if _HOSTNAME.fullmatch(host):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -135,8 +157,12 @@ def valid_redirect_uri(uri: Any) -> bool:
     scheme = parts.scheme.lower()
     if parts.fragment or not _SCHEME.fullmatch(scheme) or scheme in FORBIDDEN_SCHEMES:
         return False
+    if scheme in ("http", "https") and (
+        parts.username is not None or not _plain_host(parts.hostname)
+    ):
+        return False
     if scheme == "https":
-        return bool(parts.hostname)
+        return True
     if scheme == "http":
         return (parts.hostname or "") in LOOPBACK_HOSTS
     # Private-use scheme (RFC 8252 §7.1): com.example.app:/cb, or a known client's own
@@ -328,12 +354,13 @@ def is_cimd_client_id(client_id: str) -> bool:
         parts = urlsplit(client_id)
     except ValueError:
         return False
-    if parts.scheme != "https" or not parts.hostname or parts.fragment:
+    host = parts.hostname
+    if parts.scheme != "https" or host is None or not _plain_host(host) or parts.fragment:
         return False
     if parts.username or parts.password or parts.path in ("", "/"):
         return False
     try:
-        ipaddress.ip_address(parts.hostname)
+        ipaddress.ip_address(host)
         return False  # a client is identified by a domain, not an address
     except ValueError:
         return True
@@ -346,6 +373,12 @@ _cimd_failures: "OrderedDict[str, float]" = OrderedDict()
 # How long a fetch may wait for a free slot before the client is refused for now.
 CIMD_SLOT_WAIT_SECONDS = 2.0
 _cimd_fetches: Optional[tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = None
+_site_fetches: dict[str, int] = {}
+
+
+def _site(client_id: str) -> str:
+    host = (urlsplit(client_id).hostname or "").rstrip(".")
+    return ".".join(host.split(".")[-2:])
 
 
 def _fetch_slots() -> asyncio.Semaphore:
@@ -368,8 +401,9 @@ async def fetch_cimd_client(client_id: str) -> Optional[OAuthClient]:
     """The client described at ``client_id``, or None when it cannot be used.
 
     Bounded so it cannot be turned into a request reflector: one fetch per URL per
-    ``CIMD_FAILURE_TTL`` after a failure, ``CIMD_MAX_CONCURRENT_FETCHES`` at once, and the
-    whole fetch (not each read) within ``CIMD_TIMEOUT_SECONDS``.
+    ``CIMD_FAILURE_TTL`` after a failure, ``CIMD_MAX_CONCURRENT_FETCHES`` at once (at most
+    ``CIMD_MAX_FETCHES_PER_SITE`` of them for one site), and the whole fetch (not each
+    read) within ``CIMD_TIMEOUT_SECONDS``.
     """
     cached = _cimd_cache.get(client_id)
     if cached is not None and cached[1] > time.monotonic():
@@ -378,22 +412,42 @@ async def fetch_cimd_client(client_id: str) -> Optional[OAuthClient]:
     failed_until = _cimd_failures.get(client_id)
     if failed_until is not None and failed_until > time.monotonic():
         return None
-    slots = _fetch_slots()
-    try:
-        await asyncio.wait_for(slots.acquire(), CIMD_SLOT_WAIT_SECONDS)
-    except asyncio.TimeoutError:
-        logger.warning("Client metadata fetches at capacity; refusing %r for now", client_id[:80])
+    site = _site(client_id)
+    if _site_fetches.get(site, 0) >= CIMD_MAX_FETCHES_PER_SITE:
+        logger.warning(
+            "Client metadata fetches for one site at capacity; refusing %r", client_id[:80]
+        )
         return None
+    _site_fetches[site] = _site_fetches.get(site, 0) + 1
     try:
+        slots = _fetch_slots()
+        try:
+            await asyncio.wait_for(slots.acquire(), CIMD_SLOT_WAIT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Client metadata fetches at capacity; refusing %r for now", client_id[:80]
+            )
+            return None
         try:
             body, _ = await asyncio.wait_for(_fetch_metadata(client_id), CIMD_TIMEOUT_SECONDS)
         finally:
             slots.release()
+    except (InputError, asyncio.TimeoutError) as exc:
+        logger.info("Client metadata document rejected (%s)", type(exc).__name__)
+        _note_failure(client_id)
+        return None
+    finally:
+        remaining = _site_fetches.get(site, 1) - 1
+        if remaining > 0:
+            _site_fetches[site] = remaining
+        else:
+            _site_fetches.pop(site, None)
+    try:
         data = json.loads(body)
         if not isinstance(data, dict) or data.get("client_id") != client_id:
             raise ValueError("client_id in the document does not match its URL")
         name, uris = _validated_metadata(data)
-    except (InputError, ValueError, TypeError, RecursionError, asyncio.TimeoutError) as exc:
+    except (ValueError, TypeError, RecursionError) as exc:
         logger.info("Client metadata document rejected (%s)", type(exc).__name__)
         _note_failure(client_id)
         return None
@@ -414,8 +468,6 @@ async def _fetch_metadata(url: str) -> tuple[bytes, str]:
         schemes=("https",),
         refused_content_types=(),
         accept="application/json",
-        # Uncompressed only, so the byte cap counts what is actually received
-        extra_headers={"Accept-Encoding": "identity"},
     )
     return body, content_type
 
@@ -441,3 +493,4 @@ async def resolve_client(client_id: Optional[str]) -> Optional[OAuthClient]:
 def clear_cimd_cache() -> None:
     _cimd_cache.clear()
     _cimd_failures.clear()
+    _site_fetches.clear()

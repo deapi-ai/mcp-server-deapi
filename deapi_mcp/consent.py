@@ -24,6 +24,7 @@ The key is never logged and never echoed back into the page.
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -129,8 +130,36 @@ def verify_request(token: Optional[str]) -> Optional[dict[str, Any]]:
 # --- failed key attempts -----------------------------------------------------------------------
 
 
+_REFUND_SCRIPT = """
+local v = redis.call('GET', KEYS[1])
+if v and tonumber(v) > 0 then return redis.call('DECR', KEYS[1]) end
+return 0
+"""
+
+
+def _limit_subject(ip: str) -> str:
+    """Who an attempt is counted against: the address, or its /64 for IPv6.
+
+    One IPv6 subscriber usually holds a whole /64, so counting single addresses would
+    give them as many tries as they have addresses.
+    """
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if isinstance(address, ipaddress.IPv6Address):
+        if address.ipv4_mapped is not None:
+            return str(address.ipv4_mapped)
+        return str(ipaddress.IPv6Network((address, 64), strict=False))
+    return str(address)
+
+
 class KeyFailureLimiter:
     """Counts failed key attempts per client IP; Redis when configured, else this process.
+
+    An attempt is counted before the key is checked (``attempt``) and given back when the
+    key turns out good or could not be checked (``refund``), so a burst of concurrent
+    wrong keys cannot all get checked before the limit sees them.
 
     A Redis error falls back to the in-process count, so the sign-in screen keeps
     working (with a per-replica limit) while Redis is away.
@@ -139,21 +168,33 @@ class KeyFailureLimiter:
     def __init__(self) -> None:
         self._local: dict[str, tuple[int, float]] = {}
         self._redis: Any = None
+        self._refund_script: Any = None
         if settings.redis_host:
             self._redis = build_redis_client(settings)
+            self._refund_script = self._redis.register_script(_REFUND_SCRIPT)
 
     @staticmethod
     def _bucket(ip: str) -> str:
-        return hashlib.sha256(ip.encode()).hexdigest()[:32]
+        return hashlib.sha256(_limit_subject(ip).encode()).hexdigest()[:32]
 
     def _redis_key(self, ip: str) -> str:
         return f"{settings.redis_prefix}oauth_key_fail:{self._bucket(ip)}"
 
     def _local_count(self, ip: str) -> int:
-        count, until = self._local.get(ip, (0, 0.0))
+        subject = _limit_subject(ip)
+        count, until = self._local.get(subject, (0, 0.0))
         if until <= time.time():
-            self._local.pop(ip, None)
+            self._local.pop(subject, None)
             return 0
+        return count
+
+    def _local_add(self, ip: str, delta: int) -> int:
+        subject = _limit_subject(ip)
+        count = max(0, self._local_count(ip) + delta)
+        until = self._local.get(subject, (0, time.time() + KEY_FAILURE_WINDOW))[1]
+        self._local[subject] = (count, until)
+        if len(self._local) > 10_000:
+            self._local.pop(next(iter(self._local)))
         return count
 
     async def blocked(self, ip: str) -> bool:
@@ -165,22 +206,33 @@ class KeyFailureLimiter:
                 logger.warning("Key attempt limiter: Redis unavailable, counting in memory")
         return self._local_count(ip) >= MAX_KEY_FAILURES
 
-    async def record_failure(self, ip: str) -> None:
+    async def record_failure(self, ip: str) -> int:
+        """Count one attempt against ``ip``; the count afterwards."""
         if self._redis is not None:
             try:
                 key = self._redis_key(ip)
                 async with self._redis.pipeline(transaction=True) as pipe:
                     pipe.set(key, 0, ex=KEY_FAILURE_WINDOW, nx=True)
                     pipe.incr(key)
-                    await pipe.execute()
+                    _, count = await pipe.execute()
+                return int(count)
+            except Exception:
+                logger.warning("Key attempt limiter: Redis unavailable, counting in memory")
+        return self._local_add(ip, 1)
+
+    async def attempt(self, ip: str) -> bool:
+        """Count an attempt before the key is checked; False when over the limit."""
+        return await self.record_failure(ip) <= MAX_KEY_FAILURES
+
+    async def refund(self, ip: str) -> None:
+        """Give back an attempt whose key was good or could not be checked."""
+        if self._redis is not None:
+            try:
+                await self._refund_script(keys=[self._redis_key(ip)])
                 return
             except Exception:
                 logger.warning("Key attempt limiter: Redis unavailable, counting in memory")
-        count = self._local_count(ip)
-        until = self._local.get(ip, (0, time.time() + KEY_FAILURE_WINDOW))[1]
-        self._local[ip] = (count + 1, until)
-        if len(self._local) > 10_000:
-            self._local.pop(next(iter(self._local)))
+        self._local_add(ip, -1)
 
 
 _limiter: Optional[KeyFailureLimiter] = None
@@ -468,16 +520,12 @@ async def submit_consent(request: Request) -> Response:
     signed = raw_request if isinstance(raw_request, str) else ""
     ip = _client_ip(request)
     limiter = get_limiter()
+    too_many = (
+        "Too many attempts with a wrong key. Wait a few minutes and try again.",
+        429,
+    )
     if await limiter.blocked(ip):
-        page = consent_page(
-            client,
-            redirect_uri,
-            signed,
-            csrf_cookie,
-            "Too many attempts with a wrong key. Wait a few minutes and try again.",
-            status_code=429,
-        )
-        return page
+        return consent_page(client, redirect_uri, signed, csrf_cookie, *too_many)
 
     key_value = form.get("api_key")
     api_key = key_value.strip() if isinstance(key_value, str) else ""
@@ -486,11 +534,17 @@ async def submit_consent(request: Request) -> Response:
             client, redirect_uri, signed, csrf_cookie, "Enter your deAPI API key.", 400
         )
 
+    # Counted before the check, given back unless deAPI refuses the key
+    if not await limiter.attempt(ip):
+        return consent_page(client, redirect_uri, signed, csrf_cookie, *too_many)
     status = (
-        await get_key_verifier().verify(api_key) if settings.verify_api_keys else KeyStatus.VALID
+        await get_key_verifier().verify(api_key, sign_in=True)
+        if settings.verify_api_keys
+        else KeyStatus.VALID
     )
+    if status is not KeyStatus.INVALID:
+        await limiter.refund(ip)
     if status is KeyStatus.INVALID:
-        await limiter.record_failure(ip)
         return consent_page(
             client,
             redirect_uri,
@@ -511,7 +565,7 @@ async def submit_consent(request: Request) -> Response:
 
     code = secrets.token_urlsafe(32)
     try:
-        stored = await auth_code_store.get_auth_code_store().put(
+        stored = await auth_code_store.get_auth_code_store("sign_in").put(
             code,
             {
                 "client_id": client.client_id,
