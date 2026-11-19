@@ -12,9 +12,9 @@ dependencies = [
     "httpx>=0.27.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    # The deAPI SDK backs the HTTP client. Pinned to a published git tag tarball
-    # (the SDK is not on PyPI yet); bump the tag when the SDK releases.
-    "deapi-sdk @ https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.2.tar.gz",
+    # The deAPI SDK backs the HTTP client. deapi_mcp uses its private modules (_client,
+    # _config, _exceptions), so stay within one minor version and re-test on every bump.
+    "deapi-sdk>=0.6.1,<0.7",
     "python-dotenv>=1.0.0",
     "uvicorn>=0.30.0",
     "PyJWT>=2.8.0",
