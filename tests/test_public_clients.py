@@ -778,3 +778,103 @@ async def test_slow_metadata_server_times_out(monkeypatch):
     oauth_clients.clear_cimd_cache()
     assert await oauth_clients.fetch_cimd_client(CIMD_ID) is None
     oauth_clients.clear_cimd_cache()
+
+
+# --- review follow-ups ------------------------------------------------------------------------
+
+
+def test_omitted_redirect_uri_may_be_omitted_at_token(app_client, api):
+    client_id = dcr_client(app_client)
+    page = authorize(app_client, client_id, redirect_uri=None)
+    done = submit(app_client, page)
+    code = location_query(done)["code"]
+    r = app_client.post(
+        "/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "code": code,
+            "code_verifier": VERIFIER,
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_supplied_redirect_uri_is_still_required_at_token(app_client, api):
+    client_id = dcr_client(app_client)
+    done = submit(app_client, authorize(app_client, client_id))
+    r = app_client.post(
+        "/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "code": location_query(done)["code"],
+            "code_verifier": VERIFIER,
+        },
+    )
+    assert r.json()["error"] == "invalid_grant"
+
+
+@pytest.mark.parametrize(
+    "resource",
+    ["http://mcp.test/mcp", "https://MCP.test:443/mcp", "https://mcp.test/mcp/"],
+)
+def test_resource_ignores_scheme_case_and_port(app_client, api, resource):
+    client_id = dcr_client(app_client)
+    assert authorize(app_client, client_id, resource=resource).status_code == 200
+
+
+def test_preregistered_client_is_not_refused_for_resource(app_client, api):
+    r = app_client.get(
+        "/authorize",
+        params={
+            "client_id": "deapi-mcp",
+            "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+            "response_type": "code",
+            "code_challenge": CHALLENGE,
+            "code_challenge_method": "S256",
+            "resource": "https://elsewhere.example/mcp",
+        },
+        follow_redirects=False,
+    )
+    assert "code" in location_query(r)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"[" * 3000 + b"]" * 3000,
+        b'{"redirect_uris": ["https://client.example.com/cb"], "grant_types": [["x"]]}',
+        b'{"redirect_uris": ["https://client.example.com/cb"], "response_types": [{"a": 1}]}',
+    ],
+)
+def test_hostile_registration_bodies_are_400_not_500(app_client, body):
+    r = app_client.post("/register", content=body, headers={"Content-Type": "application/json"})
+    assert r.status_code == 400
+
+
+def test_non_ascii_form_fields_are_refused_not_500(app_client, api):
+    client_id = dcr_client(app_client)
+    page = authorize(app_client, client_id)
+    assert submit(app_client, page, csrf="żółw").status_code == 400
+    assert submit(app_client, page, request="ż.ł").status_code == 400
+
+
+@pytest.mark.parametrize("name", ["dеАРІ", "ｄｅａｐｉ", "dεαρι tool"])
+def test_lookalike_deapi_names_are_replaced(app_client, api, name):
+    client_id = dcr_client(app_client, client_name=name)
+    assert "Unnamed application" in authorize(app_client, client_id).text
+
+
+async def test_redis_limiter_sets_the_window_atomically():
+    import fakeredis
+
+    limiter = consent.KeyFailureLimiter()
+    limiter._redis = fakeredis.FakeAsyncRedis(decode_responses=True)
+    for _ in range(consent.MAX_KEY_FAILURES):
+        await limiter.record_failure("198.51.100.1")
+    key = limiter._redis_key("198.51.100.1")
+    assert int(await limiter._redis.get(key)) == consent.MAX_KEY_FAILURES
+    assert 0 < await limiter._redis.ttl(key) <= consent.KEY_FAILURE_WINDOW
+    assert await limiter.blocked("198.51.100.1")
+    assert not await limiter.blocked("198.51.100.2")

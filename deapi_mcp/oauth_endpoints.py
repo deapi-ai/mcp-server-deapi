@@ -153,11 +153,21 @@ def issuer_url(request: Request) -> str:
 
 
 def resource_is_ours(resource: Optional[str], request: Request) -> bool:
-    """RFC 8707: a ``resource`` the client names must be this MCP server."""
+    """RFC 8707: a ``resource`` the client names must be this MCP server.
+
+    Host and path decide; scheme and port do not, so a proxy that hides the original
+    scheme (``http`` behind TLS termination) cannot turn a correct request away.
+    """
     if not resource:
         return True
-    canonical = f"{issuer_url(request)}/mcp"
-    return resource.rstrip("/") in (canonical, issuer_url(request))
+    try:
+        named = urlparse(resource)
+        ours = urlparse(issuer_url(request))
+    except ValueError:
+        return False
+    if (named.hostname or "").lower() != (ours.hostname or "").lower():
+        return False
+    return named.path.rstrip("/") in ("", "/mcp")
 
 
 def authorization_redirect(
@@ -536,10 +546,14 @@ async def _token_response(request: Request) -> JSONResponse:
             status_code=400,
         )
     if not resource_is_ours(_form_str(form_data, "resource"), request):
-        return JSONResponse(
-            {"error": "invalid_target", "error_description": "resource is not this MCP server"},
-            status_code=400,
-        )
+        if public_client is None:
+            # 0.6.x ignored resource; keep the pre-registered client working, but say so
+            logger.warning("Token request for client deapi-mcp names another resource")
+        else:
+            return JSONResponse(
+                {"error": "invalid_target", "error_description": "resource is not this MCP server"},
+                status_code=400,
+            )
 
     # Handle refresh_token grant
     if grant_type == "refresh_token":
@@ -656,9 +670,11 @@ async def _token_response(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        # Verify redirect_uri matches
-        if redirect_uri != auth_data["redirect_uri"]:
-            logger.error(f"Redirect URI mismatch: {redirect_uri} vs {auth_data['redirect_uri']}")
+        # Verify redirect_uri matches. RFC 6749 §4.1.3: required here only when the
+        # authorization request carried one; when it was left out, it may be left out again.
+        supplied = auth_data.get("redirect_uri_supplied", True)
+        if (supplied or redirect_uri is not None) and redirect_uri != auth_data["redirect_uri"]:
+            logger.error("Redirect URI mismatch: %r vs %r", redirect_uri, auth_data["redirect_uri"])
             return JSONResponse(
                 {"error": "invalid_grant", "error_description": "redirect_uri mismatch"},
                 status_code=400,
@@ -811,6 +827,7 @@ async def authorize_endpoint(request: Request) -> Response:
     resource = request.query_params.get("resource")
 
     public_client: Optional[OAuthClient] = None
+    redirect_uri_supplied = True
     if settings.oauth_public_clients and looks_like_public_client_id(client_id):
         public_client = await resolve_client(client_id)
         if public_client is None:
@@ -820,13 +837,14 @@ async def authorize_endpoint(request: Request) -> Response:
             )
         if not redirect_uri and len(public_client.redirect_uris) == 1:
             redirect_uri = public_client.redirect_uris[0]
+            redirect_uri_supplied = False
         if not redirect_uri or not public_client.allows_redirect(redirect_uri):
             # Never redirect to a URI the client did not register (open redirect)
             return consent_error_page(
                 "The application asked to return to an address it has not registered."
             )
     elif not client_id or client_id != DEFAULT_CLIENT_ID:
-        logger.error("Invalid client_id: %s", (client_id or "")[:80])
+        logger.error("Invalid client_id: %r", (client_id or "")[:80])
         # RFC 6749 4.1.2.1: never redirect to a redirect_uri that is not tied to a valid
         # client (open redirect), so answer directly.
         return JSONResponse(
@@ -841,7 +859,7 @@ async def authorize_endpoint(request: Request) -> Response:
                 status_code=400,
             )
         if not _validate_redirect_uri(redirect_uri):
-            logger.error("Invalid redirect_uri scheme: %s", redirect_uri)
+            logger.error("Invalid redirect_uri scheme: %r", redirect_uri[:200])
             return JSONResponse(
                 {
                     "error": "invalid_request",
@@ -877,7 +895,9 @@ async def authorize_endpoint(request: Request) -> Response:
             state,
         )
 
-    if not resource_is_ours(resource, request):
+    if not resource_is_ours(resource, request) and public_client is None:
+        logger.warning("Authorization request for client deapi-mcp names another resource")
+    elif not resource_is_ours(resource, request):
         return authorization_redirect(
             request,
             redirect_uri,
@@ -893,6 +913,7 @@ async def authorize_endpoint(request: Request) -> Response:
             {
                 "client_id": public_client.client_id,
                 "redirect_uri": redirect_uri,
+                "redirect_uri_supplied": redirect_uri_supplied,
                 "state": state,
                 "code_challenge": code_challenge,
                 "resource": resource,

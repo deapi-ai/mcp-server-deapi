@@ -429,3 +429,13 @@ def test_missing_token_answer_is_left_alone(app_client, api):
     r = mcp(app_client, INITIALIZE)
     assert r.status_code == 401
     assert "error=" not in r.headers["www-authenticate"]
+
+
+def test_x_api_key_is_only_read_on_mcp(app_client, api):
+    r = app_client.post(
+        "/token",
+        data={"grant_type": "client_credentials", "client_id": "deapi-mcp"},
+        headers={"X-API-Key": GOOD},
+    )
+    assert r.status_code == 401
+    assert r.json()["error"] == "invalid_client"

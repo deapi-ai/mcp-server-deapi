@@ -115,11 +115,11 @@ def verify_request(token: Optional[str]) -> Optional[dict[str, Any]]:
     if not sep:
         return None
     expected = _b64(hmac.new(_request_key(), body.encode(), hashlib.sha256).digest())
-    if not hmac.compare_digest(expected, signature):
+    if not hmac.compare_digest(expected.encode(), signature.encode()):
         return None
     try:
         data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(data, dict) or int(data.get("exp", 0)) < time.time():
         return None
@@ -169,9 +169,10 @@ class KeyFailureLimiter:
         if self._redis is not None:
             try:
                 key = self._redis_key(ip)
-                count = await self._redis.incr(key)
-                if int(count) == 1:
-                    await self._redis.expire(key, KEY_FAILURE_WINDOW)
+                async with self._redis.pipeline(transaction=True) as pipe:
+                    pipe.set(key, 0, ex=KEY_FAILURE_WINDOW, nx=True)
+                    pipe.incr(key)
+                    await pipe.execute()
                 return
             except Exception:
                 logger.warning("Key attempt limiter: Redis unavailable, counting in memory")
@@ -442,7 +443,7 @@ async def submit_consent(request: Request) -> Response:
     if (
         not isinstance(csrf_form, str)
         or not csrf_cookie
-        or not hmac.compare_digest(csrf_form, csrf_cookie)
+        or not hmac.compare_digest(csrf_form.encode(), csrf_cookie.encode())
     ):
         return error_page(
             "The sign-in form could not be verified. Make sure cookies are enabled and start "
@@ -515,6 +516,7 @@ async def submit_consent(request: Request) -> Response:
             {
                 "client_id": client.client_id,
                 "redirect_uri": redirect_uri,
+                "redirect_uri_supplied": bool(fields.get("redirect_uri_supplied", True)),
                 "code_challenge": fields.get("code_challenge"),
                 "expires_at": time.time() + AUTHORIZATION_CODE_EXPIRATION_SECONDS,
                 "state": state,
@@ -537,5 +539,11 @@ async def submit_consent(request: Request) -> Response:
         )
     logger.info("Public client signed in (%s)", client.kind)
     response = authorization_redirect(request, redirect_uri, {"code": code}, state, 303)
-    response.delete_cookie(_csrf_cookie_name(request), path="/")
+    response.delete_cookie(
+        _csrf_cookie_name(request),
+        path="/",
+        secure=_is_https(request),
+        httponly=True,
+        samesite="strict",
+    )
     return response

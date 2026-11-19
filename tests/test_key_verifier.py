@@ -260,3 +260,17 @@ def test_switch_reads_the_environment(monkeypatch, raw, expected):
 
     monkeypatch.setenv("DEAPI_VERIFY_API_KEYS", raw)
     assert Settings(_env_file=None).verify_api_keys is expected
+
+
+async def test_probes_in_flight_are_capped(api, monkeypatch):
+    monkeypatch.setattr(key_verifier, "MAX_CONCURRENT_PROBES", 2)
+    verifier = KeyVerifier()
+    api.release = asyncio.Event()
+    api.statuses = {f"sk-dp-k{i}-0123456789": 200 for i in range(3)}
+    first = [asyncio.create_task(verifier.verify(f"sk-dp-k{i}-0123456789")) for i in range(2)]
+    await asyncio.sleep(0)
+    # A third distinct key while two probes are in flight is let through unchecked
+    assert await verifier.verify("sk-dp-k2-0123456789") is KeyStatus.UNKNOWN
+    api.release.set()
+    assert set(await asyncio.gather(*first)) == {KeyStatus.VALID}
+    assert api.calls == 2

@@ -37,7 +37,7 @@ class ApiKeyHeaderMiddleware:
         self.app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] == "http":
+        if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
             headers = scope.get("headers") or []
             if not any(name == b"authorization" for name, _ in headers):
                 key = next((value for name, value in headers if name == API_KEY_HEADER), b"")

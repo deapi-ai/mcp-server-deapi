@@ -320,6 +320,17 @@ def create_app(
     )
     starlette_app.routes.append(Route("/authorize", authorize_handler, methods=["GET", "POST"]))
     # Dynamic client registration (RFC 7591) for public clients; a 404 when switched off
+    if (
+        deapi_settings.oauth_public_clients
+        and host not in LOOPBACK_HOSTS
+        and not deapi_settings.client_ip_header
+    ):
+        logger.warning(
+            "DEAPI_CLIENT_IP_HEADER is not set: the sign-in screen counts wrong keys by the "
+            "connection address, which behind a proxy is the proxy's (one shared limit) or "
+            "whatever X-Forwarded-For says. Set it to a header your edge sets, e.g. "
+            "CF-Connecting-IP behind Cloudflare."
+        )
     if deapi_settings.oauth_public_clients:
         from .oauth_clients import register_endpoint
 

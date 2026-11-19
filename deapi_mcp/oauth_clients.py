@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -159,12 +160,35 @@ def redirect_matches(registered: str, requested: str) -> bool:
     return (a.hostname, a.path, a.query) == (b.hostname, b.path, b.query)
 
 
+# Cyrillic and Greek letters that look like the Latin ones in "deapi".
+_LOOKALIKES = str.maketrans(
+    {
+        "а": "a",
+        "е": "e",
+        "р": "p",
+        "і": "i",
+        "ԁ": "d",
+        "ӏ": "i",
+        "α": "a",
+        "ε": "e",
+        "ρ": "p",
+        "ι": "i",
+        "ı": "i",
+        "ɑ": "a",
+        "ⅾ": "d",
+        "ⅰ": "i",
+    }
+)
+
+
 def _clean_name(value: Any, fallback: str) -> str:
     """A name safe to show: no control or invisible characters, short, not posing as deAPI."""
     if not isinstance(value, str):
         return fallback
-    name = " ".join(_INVISIBLE.sub("", _CONTROL.sub("", value)).split())
-    if "deapi" in _LETTERS.sub("", name.lower()):
+    name = unicodedata.normalize("NFKC", value)
+    name = " ".join(_INVISIBLE.sub("", _CONTROL.sub("", name)).split())
+    skeleton = _LETTERS.sub("", name.lower().translate(_LOOKALIKES))
+    if "deapi" in skeleton:
         return fallback  # only deAPI may call itself deAPI on its own sign-in screen
     return name[:MAX_CLIENT_NAME_LENGTH] or fallback
 
@@ -188,10 +212,18 @@ def _validated_metadata(data: Any) -> tuple[str, tuple[str, ...]]:
     if method != "none":
         raise ValueError("token_endpoint_auth_method must be none (public client with PKCE)")
     grants = data.get("grant_types", ["authorization_code"])
-    if not isinstance(grants, list) or not set(grants) <= {"authorization_code", "refresh_token"}:
+    if (
+        not isinstance(grants, list)
+        or not all(isinstance(g, str) for g in grants)
+        or not set(grants) <= {"authorization_code", "refresh_token"}
+    ):
         raise ValueError("grant_types may only contain authorization_code and refresh_token")
     responses = data.get("response_types", ["code"])
-    if not isinstance(responses, list) or not set(responses) <= {"code"}:
+    if (
+        not isinstance(responses, list)
+        or not all(isinstance(r, str) for r in responses)
+        or not set(responses) <= {"code"}
+    ):
         raise ValueError("response_types may only contain code")
     return _clean_name(data.get("client_name"), "Unnamed application"), tuple(uris)
 
@@ -230,13 +262,13 @@ def decode_dcr_client_id(client_id: str) -> Optional[OAuthClient]:
     if not sep:
         return None
     expected = _b64(hmac.new(_dcr_key(), payload.encode(), hashlib.sha256).digest())
-    if not hmac.compare_digest(expected, signature):
+    if not hmac.compare_digest(expected.encode(), signature.encode()):
         return None
     try:
         data = json.loads(_unb64(payload))
         name = _clean_name(data["n"], "Unnamed application")
         uris = tuple(str(u) for u in data["r"])
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, RecursionError):
         return None
     return OAuthClient(client_id, "dcr", name, uris)
 
@@ -252,7 +284,7 @@ async def register_endpoint(request: Request) -> JSONResponse:
             )
     try:
         data = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return _registration_error("invalid_client_metadata", "The body must be a JSON object")
     try:
         name, uris = _validated_metadata(data)
@@ -311,7 +343,18 @@ _cimd_cache: "OrderedDict[str, tuple[OAuthClient, float]]" = OrderedDict()
 
 
 _cimd_failures: "OrderedDict[str, float]" = OrderedDict()
-_cimd_fetches = asyncio.Semaphore(CIMD_MAX_CONCURRENT_FETCHES)
+# How long a fetch may wait for a free slot before the client is refused for now.
+CIMD_SLOT_WAIT_SECONDS = 2.0
+_cimd_fetches: Optional[tuple[asyncio.AbstractEventLoop, asyncio.Semaphore]] = None
+
+
+def _fetch_slots() -> asyncio.Semaphore:
+    """The fetch semaphore of the running event loop (created on first use there)."""
+    global _cimd_fetches
+    loop = asyncio.get_running_loop()
+    if _cimd_fetches is None or _cimd_fetches[0] is not loop:
+        _cimd_fetches = (loop, asyncio.Semaphore(CIMD_MAX_CONCURRENT_FETCHES))
+    return _cimd_fetches[1]
 
 
 def _note_failure(client_id: str) -> None:
@@ -335,17 +378,22 @@ async def fetch_cimd_client(client_id: str) -> Optional[OAuthClient]:
     failed_until = _cimd_failures.get(client_id)
     if failed_until is not None and failed_until > time.monotonic():
         return None
-    if _cimd_fetches.locked():
-        logger.warning("Client metadata fetches at capacity; refusing %s for now", client_id[:80])
+    slots = _fetch_slots()
+    try:
+        await asyncio.wait_for(slots.acquire(), CIMD_SLOT_WAIT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning("Client metadata fetches at capacity; refusing %r for now", client_id[:80])
         return None
     try:
-        async with _cimd_fetches:
+        try:
             body, _ = await asyncio.wait_for(_fetch_metadata(client_id), CIMD_TIMEOUT_SECONDS)
+        finally:
+            slots.release()
         data = json.loads(body)
         if not isinstance(data, dict) or data.get("client_id") != client_id:
             raise ValueError("client_id in the document does not match its URL")
         name, uris = _validated_metadata(data)
-    except (InputError, ValueError, asyncio.TimeoutError) as exc:
+    except (InputError, ValueError, TypeError, RecursionError, asyncio.TimeoutError) as exc:
         logger.info("Client metadata document rejected (%s)", type(exc).__name__)
         _note_failure(client_id)
         return None

@@ -51,6 +51,10 @@ OBSERVED_INVALID_TTL = 600.0
 PROBE_TIMEOUT = 5.0
 # Distinct keys remembered at once, least recently used evicted first.
 MAX_ENTRIES = 10_000
+# Probes in flight at once. A flood of random keys beyond this is let through unchecked
+# (the API then refuses each tool call), as before this check existed, instead of
+# turning the server into an amplifier of requests to the API.
+MAX_CONCURRENT_PROBES = 32
 
 # Monotonic clock for verdict expiry; a seam the tests replace.
 _clock = time.monotonic
@@ -135,6 +139,9 @@ class KeyVerifier:
 
         probe = self._inflight.get(cache_key)
         if probe is None:
+            if len(self._inflight) >= MAX_CONCURRENT_PROBES:
+                logger.warning("API key check: too many checks in flight; letting a key through")
+                return KeyStatus.UNKNOWN
             probe = asyncio.ensure_future(self._probe_and_store(cache_key, api_key))
             self._inflight[cache_key] = probe
 
