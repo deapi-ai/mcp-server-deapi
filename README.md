@@ -89,7 +89,17 @@ Generation parameters such as `width`, `height`, `steps`, `frames` and `fps` def
 - Sign up at [app.deapi.ai](https://app.deapi.ai/register) and create an API token at
   [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys)
 
-### Setup
+### Install from PyPI
+
+```bash
+pip install deapi-mcp
+# or run it without installing:
+uvx deapi-mcp
+```
+
+The `deapi-mcp` command starts the HTTP server (see [Running the Server](#running-the-server)).
+
+### Setup from source
 
 1. Clone the repository:
 ```bash
@@ -176,7 +186,7 @@ OAuth Client Secret: YOUR_DEAPI_TOKEN
 
 4. Click **Add** — Claude will automatically authenticate via OAuth and discover all tools.
 
-For details on the OAuth flow, see [AUTH.md](AUTH.md).
+For details on the OAuth flow, see [AUTH.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/AUTH.md).
 
 ---
 
@@ -230,7 +240,7 @@ Use audio_transcription with:
 - include_ts: true
 ```
 
-**Note**: When calling tools via Claude Desktop or MCP SDK, authentication is handled automatically through the server connection (OAuth or HTTP headers). See [AUTH.md](AUTH.md) for detailed OAuth setup.
+**Note**: When calling tools via Claude Desktop or MCP SDK, authentication is handled automatically through the server connection (OAuth or HTTP headers). See [AUTH.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/AUTH.md) for detailed OAuth setup.
 
 ## Architecture
 
@@ -276,7 +286,7 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x,
 Configuration can be set via environment variables (prefixed with `DEAPI_`). A variable set to
 an empty value (`DEAPI_REDIS_PORT=`) counts as unset and takes the default. Comments go on their
 own line: some tools (`docker --env-file`, `kubectl create configmap --from-env-file`) keep text
-after a value, `# ...` included, as part of that value. [`.env.example`](.env.example) lists
+after a value, `# ...` included, as part of that value. [`.env.example`](https://github.com/deapi-ai/mcp-server-deapi/blob/main/.env.example) lists
 every variable with its default; the block below shows the common ones.
 
 ```bash
@@ -335,7 +345,7 @@ MCP_GRACEFUL_SHUTDOWN_SECONDS=930
 # FORWARDED_ALLOW_IPS=*
 ```
 
-With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally. A replayed delivery (same `delivery_id`) wakes nobody twice. The job registry is in process memory by default; with several replicas, see [DEPLOYMENT.md](DEPLOYMENT.md#running-more-than-one-replica).
+With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally. A replayed delivery (same `delivery_id`) wakes nobody twice. The job registry is in process memory by default; with several replicas, see [DEPLOYMENT.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/DEPLOYMENT.md#running-more-than-one-replica).
 
 ## Development
 
@@ -457,7 +467,7 @@ The package ships type information (`py.typed`) and exposes `deapi_mcp.__version
 3. **No persistence**: Tokens are used only for the specific request and never persisted or logged
 4. **Per-connection auth**: Tools do NOT accept `deapi_api_token` parameters - authentication is managed at the connection level
 
-Always keep your API tokens secure and never commit them to version control. See [AUTH.md](AUTH.md) for detailed OAuth setup.
+Always keep your API tokens secure and never commit them to version control. See [AUTH.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/AUTH.md) for detailed OAuth setup.
 
 ## Remote Deployment
 
@@ -534,7 +544,7 @@ server {
 - **DigitalOcean**: Use App Platform or Droplets with Docker
 - **AWS/GCP/Azure**: Deploy with container services (ECS, Cloud Run, Container Instances)
 
-For detailed deployment instructions, security considerations, monitoring, and troubleshooting, see [DEPLOYMENT.md](DEPLOYMENT.md).
+For detailed deployment instructions, security considerations, monitoring, and troubleshooting, see [DEPLOYMENT.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/DEPLOYMENT.md).
 
 ## Troubleshooting
 
@@ -570,17 +580,17 @@ If remote MCP connection fails:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/deapi-ai/mcp-server-deapi/blob/main/LICENSE) file for details.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/CHANGELOG.md).
 
 ## Support
 
 For issues related to:
 - **This MCP Server**: [Open an issue](https://github.com/deapi-ai/mcp-server-deapi/issues)
-- **A security vulnerability**: do not open a public issue; see [SECURITY.md](SECURITY.md)
+- **A security vulnerability**: do not open a public issue; see [SECURITY.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/SECURITY.md)
 - **deAPI Platform**: Visit [docs.deapi.ai](https://docs.deapi.ai/)
 - **MCP Protocol**: Visit [modelcontextprotocol.io](https://modelcontextprotocol.io)
 <!-- mcp-name: io.github.deapi-ai/mcp-server-deapi -->

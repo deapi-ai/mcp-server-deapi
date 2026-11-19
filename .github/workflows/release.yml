@@ -1,0 +1,61 @@
+name: Release
+
+# Publishing a GitHub Release (tag vX.Y.Z) builds the package and uploads it to PyPI.
+# Uploads use PyPI trusted publishing (OIDC): no API token is stored in the repository.
+# The tag push itself also runs publish-registry.yml (server.json to the MCP Registry).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build distributions
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Check that the tag matches the package version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$TAG" != "v$version" ]; then
+            echo "Release tag $TAG does not match pyproject version v$version" >&2
+            exit 1
+          fi
+      - name: Build
+        run: |
+          python -m pip install build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: Check the archives hold only the package
+        run: |
+          tar -tzf dist/*.tar.gz | grep -vE '^deapi_mcp-[^/]+/(deapi_mcp/|README.md|CHANGELOG.md|LICENSE|SECURITY.md|pyproject.toml|PKG-INFO|\.gitignore)' && { echo "unexpected files in the sdist" >&2; exit 1; } || true
+          python -m zipfile -l dist/*.whl | awk 'NR>1 {print $1}' | grep -vE '^(deapi_mcp/|deapi_mcp-[^/]+\.dist-info/)' && { echo "unexpected files in the wheel" >&2; exit 1; } || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/deapi-mcp/
+    permissions:
+      id-token: write  # trusted publishing
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

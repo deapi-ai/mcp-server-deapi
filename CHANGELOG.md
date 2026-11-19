@@ -58,6 +58,9 @@ releases are git tags `vX.Y.Z`.
   `invalid_grant`, so it signs in again. The tool result says what happened.
 
 ### Changed
+- Published on PyPI as `deapi-mcp` (`pip install deapi-mcp`, `uvx deapi-mcp`). A GitHub Release
+  (tag `vX.Y.Z`) builds and uploads it with PyPI trusted publishing; the sdist ships only the
+  package and its docs.
 - The deAPI SDK comes from PyPI (`deapi-sdk>=0.6.1,<0.7`) instead of a GitHub tag tarball.
 - A `401 invalid_token` on `/mcp` now says how to fix it: check the deAPI API key, or sign in
   again with OAuth. FastMCP's own text told clients to re-register, which this server does not
