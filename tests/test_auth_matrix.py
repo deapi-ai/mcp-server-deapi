@@ -350,11 +350,13 @@ def test_metadata_documents_only_what_is_supported(app_client):
     meta = app_client.get("/.well-known/oauth-authorization-server").json()
     assert meta["code_challenge_methods_supported"] == ["S256"]
     assert set(meta["token_endpoint_auth_methods_supported"]) == {
+        "none",
         "client_secret_post",
         "client_secret_basic",
     }
-    assert "registration_endpoint" not in meta
-    assert "client_id_metadata_document_supported" not in meta
+    assert meta["registration_endpoint"] == "https://mcp.test/register"
+    assert meta["client_id_metadata_document_supported"] is True
+    assert meta["authorization_response_iss_parameter_supported"] is True
     assert meta["service_documentation"].startswith("https://docs.deapi.ai/")
 
 

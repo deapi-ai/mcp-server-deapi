@@ -12,7 +12,7 @@ from fastmcp.server.auth import AccessToken, AuthProvider
 from starlette.routing import Route
 
 from .auth import current_deapi_token
-from .key_verifier import is_api_key_rejected
+from .key_verifier import is_api_key_rejected, is_key_known_invalid
 from .oauth_endpoints import (
     decode_jwt,
     decrypt_token,
@@ -186,6 +186,14 @@ class DeapiAuthProvider(AuthProvider):
                 except Exception:
                     logger.error("Failed to decrypt deapi token from JWT")
                     record_auth_rejected("bad_claims")
+                    return None
+
+                # deAPI refused this key on a recent call (revoked or deleted): end the
+                # session now, so the client refreshes, is refused, and signs in again.
+                # A memory read only: no request to deAPI on this path.
+                if is_key_known_invalid(deapi_token):
+                    logger.warning("Access token for an API key deAPI refuses")
+                    record_auth_rejected("invalid_key")
                     return None
             elif await is_api_key_rejected(token):
                 # A plain key carries no signature, so the API is asked once whether

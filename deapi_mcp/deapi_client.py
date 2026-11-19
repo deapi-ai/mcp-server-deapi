@@ -42,6 +42,12 @@ WEBHOOK_SECRET_MIN_LENGTH = 32
 WEBHOOK_SECRET_MAX_LENGTH = 255
 WEBHOOK_URL_MAX_LENGTH = 2048
 
+# Appended to a 401 from deAPI: the key was refused, and reconnecting is the fix.
+KEY_REFUSED_HINT = (
+    "deAPI did not accept the API key (revoked, deleted or mistyped). Reconnect with a valid "
+    "key from https://app.deapi.ai/settings/api-keys."
+)
+
 
 def _error_message(body: Dict[str, Any], fallback: str) -> str:
     """The most specific reason an error body gives.
@@ -229,6 +235,14 @@ class DeapiClient:
                 message = _error_message(body, f"HTTP {status}" if status else str(exc))
             else:
                 message = exc.message or (f"HTTP {status}" if status else str(exc))
+            if status == 401:
+                # The key itself is refused (revoked, deleted or wrong). Remember it, so the
+                # client's next request fails authentication and it signs in again, and
+                # say what to do instead of a bare "Unauthenticated.".
+                from .key_verifier import note_key_refused
+
+                note_key_refused(self.api_token)
+                message = f"{message} {KEY_REFUSED_HINT}"
             raise DeapiAPIError(message=message, status_code=status, response=body) from exc
 
     async def _request(

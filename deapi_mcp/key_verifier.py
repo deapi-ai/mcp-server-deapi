@@ -44,6 +44,8 @@ logger = logging.getLogger(__name__)
 VALID_TTL = 600.0
 INVALID_TTL = 60.0
 UNKNOWN_TTL = 15.0
+# A refusal seen on a real API call (tool or job status), not on a probe.
+OBSERVED_INVALID_TTL = 600.0
 # Seconds one probe may take. The probe runs before the request is served, so it
 # is never retried and must not stall a connection the way a tool's own call may.
 PROBE_TIMEOUT = 5.0
@@ -105,11 +107,24 @@ class KeyVerifier:
         self._verdicts.move_to_end(cache_key)
         return verdict.status
 
-    def _store(self, cache_key: str, status: KeyStatus) -> None:
-        self._verdicts[cache_key] = _Verdict(status, _clock() + _TTL[status])
+    def _store(self, cache_key: str, status: KeyStatus, ttl: Optional[float] = None) -> None:
+        self._verdicts[cache_key] = _Verdict(status, _clock() + (ttl or _TTL[status]))
         self._verdicts.move_to_end(cache_key)
         while len(self._verdicts) > self.max_entries:
             self._verdicts.popitem(last=False)
+
+    def mark_invalid(self, api_key: str) -> None:
+        """Record that deAPI just refused ``api_key`` (a 401 on a real call).
+
+        Kept for ``OBSERVED_INVALID_TTL``: long enough that the client's next request is
+        refused at authentication, which makes it sign in again, and refreshed by every
+        further 401 for the same key.
+        """
+        self._store(self._cache_key(api_key), KeyStatus.INVALID, OBSERVED_INVALID_TTL)
+
+    def known_invalid(self, api_key: str) -> bool:
+        """True when a recent verdict says deAPI refuses ``api_key``. Never probes."""
+        return self._cached(self._cache_key(api_key)) is KeyStatus.INVALID
 
     async def verify(self, api_key: str) -> KeyStatus:
         """The key's status, from the cache or from one probe shared by every caller."""
@@ -190,3 +205,14 @@ async def is_api_key_rejected(api_key: str) -> bool:
     if not settings.verify_api_keys:
         return False
     return await get_key_verifier().verify(api_key) is KeyStatus.INVALID
+
+
+def note_key_refused(api_key: str) -> None:
+    """A call with ``api_key`` got 401 from deAPI: remember it, so the session ends."""
+    if settings.verify_api_keys:
+        get_key_verifier().mark_invalid(api_key)
+
+
+def is_key_known_invalid(api_key: str) -> bool:
+    """True when deAPI recently refused ``api_key``. A cache read only, never a probe."""
+    return settings.verify_api_keys and get_key_verifier().known_invalid(api_key)

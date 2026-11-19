@@ -318,7 +318,12 @@ def create_app(
         if metrics is not None
         else token_endpoint
     )
-    starlette_app.routes.append(Route("/authorize", authorize_handler, methods=["GET"]))
+    starlette_app.routes.append(Route("/authorize", authorize_handler, methods=["GET", "POST"]))
+    # Dynamic client registration (RFC 7591) for public clients; a 404 when switched off
+    if deapi_settings.oauth_public_clients:
+        from .oauth_clients import register_endpoint
+
+        starlette_app.routes.append(Route("/register", register_endpoint, methods=["POST"]))
     starlette_app.routes.append(Route("/token", token_handler, methods=["POST"]))
 
     if job_registry is not None:

@@ -33,6 +33,30 @@ releases are git tags `vX.Y.Z`.
   with no script and no external resource, under a strict Content-Security-Policy. It follows
   the deapi.ai look (dark, amber accents, the deAPI logo inline as SVG).
 
+- OAuth for clients that register themselves: hosted connectors and apps no longer need a
+  Client ID and Secret typed in by hand.
+  - `POST /register` (RFC 7591 dynamic client registration) for public clients. The returned
+    `client_id` is the registration itself, signed with a key derived from
+    `DEAPI_JWT_SECRET_KEY`, so nothing is stored and any replica can verify it.
+  - Client ID Metadata Documents: an `https` `client_id` is fetched (public addresses only, no
+    redirects, 5 kB, cached 5 minutes) and its `redirect_uris` and name are used.
+  - A deAPI sign-in screen at `/authorize` for these clients: it names the application and
+    where the browser will return, warns about unverified applications and apps on this
+    computer, and asks for an API key, which is checked with deAPI before a code is issued.
+    Signed authorization request, CSRF cookie, a limit on wrong keys per client IP (shared
+    through Redis), no script, no framing, nothing cached.
+  - Public clients use PKCE without a secret; their codes and refresh tokens are bound to the
+    `client_id` they were issued to. Redirect URIs must match a registered one exactly
+    (loopback `http` on any port, RFC 8252).
+  - Authorization responses carry `iss` (RFC 9207), and a `resource` (RFC 8707) that names
+    another server is refused with `invalid_target`.
+  - `DEAPI_OAUTH_PUBLIC_CLIENTS` (default `true`) turns all of this off.
+  - `DEAPI_CLIENT_IP_HEADER` names a header with the real client address from a trusted edge
+    (e.g. `CF-Connecting-IP`), for the wrong-key limit.
+- A `401` from deAPI on a real call (a key revoked or deleted after sign-in) ends the session:
+  the client's next request is refused with `401 invalid_token`, its refresh with
+  `invalid_grant`, so it signs in again. The tool result says what happened.
+
 ### Changed
 - A `401 invalid_token` on `/mcp` now says how to fix it: check the deAPI API key, or sign in
   again with OAuth. FastMCP's own text told clients to re-register, which this server does not
@@ -52,8 +76,8 @@ releases are git tags `vX.Y.Z`.
     characters), not only that one is present.
   - `service_documentation` in the authorization server metadata points to the MCP server docs.
 
-  Nothing is removed: tokens issued by 0.6.x stay valid, and the metadata advertises neither
-  dynamic client registration nor client ID metadata documents.
+  Nothing is removed: tokens issued by 0.6.x stay valid, and the `deapi-mcp` flow works as
+  before (no sign-in screen).
 
 ### Fixed
 - README: Claude Desktop takes remote servers from Connectors; the `claude_desktop_config.json`

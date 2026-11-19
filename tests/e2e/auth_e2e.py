@@ -15,6 +15,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 from typing import Any
@@ -212,6 +213,77 @@ def main() -> int:
         f"{r.status_code}",
     )
 
+    # Public client: register (DCR), sign in on the screen, exchange, refresh
+    public_redirect = "https://client.example.com/oauth/callback"
+    r = http.post(
+        f"{MCP_URL}/register",
+        json={"client_name": "auth-e2e", "redirect_uris": [public_redirect]},
+    )
+    check("DCR: register -> 201", r.status_code == 201, f"{r.status_code} {r.text[:120]}")
+    public_id = r.json().get("client_id", "") if r.status_code == 201 else ""
+    if public_id:
+        browser = httpx.Client(timeout=30.0, follow_redirects=False)
+        page = browser.get(
+            f"{MCP_URL}/authorize",
+            params={
+                "client_id": public_id,
+                "redirect_uri": public_redirect,
+                "response_type": "code",
+                "code_challenge": CHALLENGE,
+                "code_challenge_method": "S256",
+                "state": "e2e-public",
+            },
+        )
+        check("sign-in screen -> 200", page.status_code == 200, str(page.status_code))
+        check(
+            "sign-in screen: strict CSP",
+            "frame-ancestors 'none'" in page.headers.get("content-security-policy", ""),
+        )
+        hidden = dict(re.findall(r'<input type=hidden name=(\w+) value="([^"]*)"', page.text))
+        wrong = browser.post(
+            f"{MCP_URL}/authorize", data={**hidden, "api_key": BAD_KEY, "action": "allow"}
+        )
+        check(
+            "sign-in: bad key -> stays on the page",
+            wrong.status_code == 400 and "location" not in wrong.headers,
+            str(wrong.status_code),
+        )
+        done = browser.post(
+            f"{MCP_URL}/authorize", data={**hidden, "api_key": GOOD_KEY, "action": "allow"}
+        )
+        query = parse_qs(urlparse(done.headers.get("location", "")).query)
+        check(
+            "sign-in: good key -> code for the client",
+            done.status_code == 303 and "code" in query and query.get("state") == ["e2e-public"],
+            str(done.status_code),
+        )
+        if "code" in query:
+            r = http.post(
+                f"{MCP_URL}/token",
+                data={
+                    "grant_type": "authorization_code",
+                    "client_id": public_id,
+                    "code": query["code"][0],
+                    "code_verifier": VERIFIER,
+                    "redirect_uri": public_redirect,
+                },
+            )
+            check("public client: code -> tokens", r.status_code == 200, str(r.status_code))
+            if r.status_code == 200:
+                public_tokens = r.json()
+                r = mcp(GET_BALANCE, token=public_tokens["access_token"])
+                payload = tool_payload(r) if r.status_code == 200 else {}
+                check("public client: get_balance success", payload.get("success") is True)
+                r = http.post(
+                    f"{MCP_URL}/token",
+                    data={
+                        "grant_type": "refresh_token",
+                        "client_id": public_id,
+                        "refresh_token": public_tokens["refresh_token"],
+                    },
+                )
+                check("public client: refresh -> 200", r.status_code == 200, str(r.status_code))
+
     # Setup page
     r = http.get(f"{MCP_URL}/")
     check(
@@ -226,7 +298,7 @@ def main() -> int:
 
     if MOCK_URL:
         calls = http.get(f"{MOCK_URL}/_control/calls").json()
-        # Bad key: Bearer and X-API-Key, /token twice -> one probe, the rest from the cache.
+        # Bad key: Bearer, X-API-Key, /token twice, the sign-in screen -> one probe.
         check("bad key probed once", calls.get("other") == 1, str(calls))
 
         # Outage: a never-seen key is let through, as before the check existed.

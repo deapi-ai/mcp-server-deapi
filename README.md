@@ -294,6 +294,11 @@ DEAPI_TOOL_MAX_WAIT=45.0
 # Check a plain API key against deAPI at connect (cached; an API outage lets keys through)
 DEAPI_VERIFY_API_KEYS=true
 
+# OAuth for self-registering clients (DCR, CIMD) with a deAPI sign-in screen
+DEAPI_OAUTH_PUBLIC_CLIENTS=true
+# Header with the real client IP from a trusted edge (limits wrong keys on the sign-in screen)
+# DEAPI_CLIENT_IP_HEADER=CF-Connecting-IP
+
 # Polling Configuration (override defaults)
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
 DEAPI_POLLING_AUDIO__MAX_DELAY=5.0

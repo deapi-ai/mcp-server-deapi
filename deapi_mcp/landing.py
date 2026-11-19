@@ -305,13 +305,14 @@ out of config files and shell history.</p>
 <ol>
 <li>Open <b>Customize → Connectors</b> and choose <b>Add custom connector</b>.</li>
 <li>Name it <code>deAPI</code> and paste the endpoint <code>{e_url}</code>.</li>
-<li>Open <b>Advanced settings</b>, choose <b>Use your own OAuth client</b> and enter
-Client ID <code>{OAUTH_CLIENT_ID}</code> and, as Client Secret, your deAPI API key.</li>
-<li>Click <b>Add</b>, then <b>Connect</b>.</li>
+<li>Click <b>Add</b>, then <b>Connect</b>. A deAPI sign-in window opens: paste your API key
+and choose <b>Allow access</b>.</li>
 </ol>
-<p class=note>Where your plan offers <b>Request headers</b> for custom connectors, you can
-instead choose no sign-in and add the header <code>Authorization: Bearer &lt;your key&gt;</code>.
-On Team and Enterprise plans an owner adds connectors under Organization settings.</p>
+<p class=note>You can also skip the sign-in window: under <b>Advanced settings</b> choose
+<b>Use your own OAuth client</b> with Client ID <code>{OAUTH_CLIENT_ID}</code> and your API key as
+Client Secret, or, where your plan offers <b>Request headers</b>, add
+<code>Authorization: Bearer &lt;your key&gt;</code>. On Team and Enterprise plans an owner adds
+connectors under Organization settings.</p>
 </details>
 
 <details>
@@ -321,16 +322,20 @@ On Team and Enterprise plans an owner adds connectors under Organization setting
 <b>Developer mode</b>.</li>
 <li>Choose <b>Create</b>, name the app <code>deAPI</code> and enter the MCP server URL
 <code>{e_url}</code>.</li>
-<li>Set <b>Authentication</b> to <b>OAuth</b> and enter Client ID
-<code>{OAUTH_CLIENT_ID}</code> and, as Client Secret, your deAPI API key.</li>
+<li>Set <b>Authentication</b> to <b>OAuth</b>. Leave the client fields empty: ChatGPT
+registers itself, and a deAPI sign-in window asks for your API key.</li>
 <li>Confirm and create the app, then enable it in a chat.</li>
 </ol>
+<p class=note>If ChatGPT asks for client credentials, enter Client ID
+<code>{OAUTH_CLIENT_ID}</code> and your API key as Client Secret.</p>
 <p class=note>Developer mode depends on your ChatGPT plan and is set up on the web.</p>
 </details>
 
 <details>
 <summary>Claude Code</summary>
 {_code(claude_code)}
+<p>Without <code>--header</code>, run <code>/mcp</code> in Claude Code and choose
+<b>Authenticate</b>: the deAPI sign-in window opens in your browser.</p>
 <p>Or share it with a project in <code>.mcp.json</code>:</p>
 {_code(claude_code_json)}
 </details>
@@ -339,7 +344,8 @@ On Team and Enterprise plans an owner adds connectors under Organization setting
 <summary>Cursor</summary>
 <p>In <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project):</p>
 {_code(cursor_json)}
-<p>If you prefer Cursor's OAuth sign-in, use the pre-registered client instead:</p>
+<p>Or leave out <code>headers</code>: Cursor then opens the deAPI sign-in window, where you
+paste your key. To skip that window with OAuth, use the pre-registered client:</p>
 {_code(cursor_oauth_json)}
 </details>
 
@@ -371,9 +377,11 @@ just "HTTP") and send your key in one of these headers:</p>
 <li><code>Authorization: Bearer &lt;your key&gt;</code></li>
 <li><code>X-API-Key: &lt;your key&gt;</code></li>
 </ul>
-<p>A client that insists on OAuth can use the pre-registered client: Client ID
-<code>{OAUTH_CLIENT_ID}</code>, Client Secret = your API key, Authorization Code flow with
-PKCE (S256). The server does not offer dynamic client registration.</p>
+<p>A client that uses OAuth needs no setup: it registers itself (dynamic client
+registration or a client ID metadata document) and opens the deAPI sign-in window, where you
+paste your API key. A client with fixed OAuth credentials can use Client ID
+<code>{OAUTH_CLIENT_ID}</code> with your API key as Client Secret. Both use the Authorization
+Code flow with PKCE (S256).</p>
 </details>
 
 <h2><small>Step 3</small>Check that it works</h2>
