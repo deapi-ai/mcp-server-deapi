@@ -47,11 +47,6 @@ deapi-mcp = "deapi_mcp.server_remote:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.hatch.metadata]
-# The deapi-sdk dependency is a direct URL reference (a published git tag tarball)
-# rather than a PyPI release; hatchling rejects direct references unless opted in.
-allow-direct-references = true
-
 [tool.hatch.build.targets.wheel]
 packages = ["deapi_mcp"]
 
