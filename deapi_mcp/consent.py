@@ -53,33 +53,36 @@ CSRF_COOKIE_HTTPS = "__Host-deapi_mcp_csrf"
 CSRF_COOKIE_HTTP = "deapi_mcp_csrf"
 
 CONSENT_CSS = """
-.auth{max-width:30rem;margin:2.5rem auto 0;background:var(--card);border:1px solid var(--line);
-border-radius:12px;padding:1.75rem 1.75rem 1.5rem}
-.auth h1{font-size:1.7rem;text-align:left;margin:0 0 .4rem}
-.who{display:flex;gap:.9rem;align-items:center;margin:1.2rem 0;padding:.9rem 1rem;
+main.signin{padding:1.25rem 1.25rem 2.5rem}
+.auth{max-width:40rem;margin:0 auto;background:var(--card);border:1px solid var(--line);
+border-radius:12px;padding:1.4rem 2rem 1.25rem;line-height:1.55;font-size:14px}
+.auth h1{font-size:1.6rem;text-align:left;margin:0 0 .25rem}
+.auth p{margin:.4rem 0}
+.who{display:flex;gap:.9rem;align-items:center;margin:.9rem 0 .5rem;padding:.7rem 1rem;
 background:var(--bg-deep);border:1px solid var(--line-soft);border-radius:8px}
 .avatar{width:2.6rem;height:2.6rem;border-radius:8px;background:#2a2416;color:var(--amber);
 display:flex;align-items:center;justify-content:center;font:700 1.1rem var(--sans);flex:none}
 .who b{display:block;font-family:var(--sans);font-size:1.05rem;overflow-wrap:anywhere}
 .who span{font-size:.8rem;color:var(--dim);overflow-wrap:anywhere}
-.dest{font-size:.9rem;margin:.2rem 0 1rem}
+.dest{font-size:.9rem;margin:.2rem 0 .6rem}
 .dest b{color:var(--amber);overflow-wrap:anywhere}
-.warn,.error{border-radius:8px;padding:.75rem 1rem;font-size:.85rem;margin:1rem 0}
+.warn,.error{border-radius:8px;padding:.6rem 1rem;font-size:.85rem;margin:.6rem 0}
 .warn{border:1px solid #6b4a12;background:#2a1e08;color:#ffd38a}
 .warn b{color:#ffe2ad}
 .error{border:1px solid #7a2433;background:#2a0d12;color:#ffb3c0}
-label{display:block;color:var(--fg);font:600 .95rem var(--sans);margin:1.2rem 0 .4rem}
+label{display:block;color:var(--fg);font:600 .95rem var(--sans);margin:.9rem 0 .35rem}
 input[type=password]{width:100%;font:1rem var(--mono);color:var(--fg);background:var(--bg-deep);
 border:1px solid var(--line);border-radius:6px;padding:.75rem .9rem}
 input[type=password]:focus{outline:2px solid var(--amber);outline-offset:1px}
 .hint{font-size:.8rem;color:var(--dim);margin:.4rem 0 0}
-ul.grants{margin:.6rem 0 1.2rem;padding-left:1.2rem;font-size:.88rem}
-.actions{display:flex;gap:.7rem;margin-top:1.4rem}
+ul.grants{margin:.3rem 0 .4rem;padding-left:1.2rem;font-size:.88rem}
+ul.grants li{margin:.1rem 0}
+.actions{display:flex;gap:.7rem;margin-top:1rem}
 .actions button{flex:1;cursor:pointer;font:700 .85rem/1 var(--mono);padding:.95rem;
 border-radius:4px;border:1px solid var(--amber);color:var(--amber);background:none}
 .actions button.solid{background:var(--amber);color:#11100d}
 .actions button:hover{background:var(--amber-hi);border-color:var(--amber-hi);color:#11100d}
-.fine{font-size:.78rem;color:var(--dim);margin-top:1.2rem}
+.fine{font-size:.78rem;color:var(--dim);margin-top:.9rem}
 """
 
 STYLE = CSS + CONSENT_CSS
@@ -246,7 +249,7 @@ def _page(title: str, body: str) -> str:
 <a class=home href="{HOME_URL}">{LOGO_SVG}</a>
 <span class=pill>MCP SERVER</span>
 </header>
-<main>
+<main class=signin>
 {body}
 </main>
 </body>
