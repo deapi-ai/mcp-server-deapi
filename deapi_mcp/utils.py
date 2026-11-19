@@ -7,7 +7,7 @@ import ipaddress
 import logging
 import re
 import socket
-from typing import Tuple, cast
+from typing import Dict, Optional, Tuple, cast
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -381,18 +381,30 @@ async def _resolve_public_ip(host: str, port: int) -> str:
     return sorted(ips)[0]
 
 
-async def safe_fetch(url: str, *, max_bytes: int, timeout: float) -> Tuple[bytes, str]:
+async def safe_fetch(
+    url: str,
+    *,
+    max_bytes: int,
+    timeout: float,
+    max_redirects: int = _MAX_REDIRECTS,
+    schemes: Tuple[str, ...] = ("http", "https"),
+    refused_content_types: Tuple[str, ...] = _REFUSED_CONTENT_TYPES,
+    accept: str = "*/*",
+    extra_headers: Optional[Dict[str, str]] = None,
+) -> Tuple[bytes, str]:
     """Fetch an http(s) URL with SSRF protections; return (body, content_type).
 
     Blocks non-public hosts, pins the connection to a validated IP, handles
     redirects manually and re-validates each hop, caps the body, and raises a
-    single generic ``InputError`` on any failure.
+    single generic ``InputError`` on any failure. The defaults suit media; a
+    caller fetching a small JSON document narrows them (no redirects, https only,
+    JSON allowed).
     """
     current = url
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
-        for _ in range(_MAX_REDIRECTS + 1):
+        for _ in range(max_redirects + 1):
             parts = urlsplit(current)
-            if parts.scheme not in ("http", "https"):
+            if parts.scheme not in schemes:
                 raise InputError(_FETCH_GENERIC_ERROR)
             host = parts.hostname
             if not host:
@@ -406,7 +418,7 @@ async def safe_fetch(url: str, *, max_bytes: int, timeout: float) -> Tuple[bytes
             request = client.build_request(
                 "GET",
                 pinned_url,
-                headers={"Host": authority, "Accept": "*/*"},
+                headers={"Host": authority, "Accept": accept, **(extra_headers or {})},
                 # Keep TLS SNI and certificate verification bound to the real host
                 # even though we connect to the pinned IP.
                 extensions={"sni_hostname": host},
@@ -425,7 +437,7 @@ async def safe_fetch(url: str, *, max_bytes: int, timeout: float) -> Tuple[bytes
                 if response.status_code >= 400:
                     raise InputError(_FETCH_GENERIC_ERROR)
                 content_type = response.headers.get("content-type", "").lower()
-                if content_type.startswith(_REFUSED_CONTENT_TYPES):
+                if refused_content_types and content_type.startswith(refused_content_types):
                     raise InputError(_FETCH_GENERIC_ERROR)
                 chunks = []
                 total = 0

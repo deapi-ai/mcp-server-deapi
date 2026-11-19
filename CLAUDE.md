@@ -37,10 +37,11 @@ The primary server is `deapi_mcp/server_remote.py` — an HTTP/SSE-based MCP ser
 
 ### Authentication Flow
 
-1. `DeapiAuthProvider` in `deapi_mcp/fastmcp_auth.py` handles OAuth 2.0 (Authorization Code + PKCE)
+1. `DeapiAuthProvider` in `deapi_mcp/fastmcp_auth.py` handles OAuth 2.0 (Authorization Code + PKCE); `ApiKeyHeaderMiddleware` (outermost layer) turns `X-API-Key` into `Authorization: Bearer` when the latter is absent
 2. Authenticated token is stored in `current_deapi_token` ContextVar (`deapi_mcp/auth.py`)
-3. Tools call `get_client()` from `deapi_mcp/deapi_client.py` which reads the token from the ContextVar
-4. Token is forwarded as Bearer auth to the deAPI REST API
+3. A plain key (not a JWT) is checked once against the API by `key_verifier.py`; a key the API refuses gets 401 at connect, and `/token` answers `invalid_client` for it. A 401 from deAPI on a real call marks the key refused, so a JWT carrying it is refused too (memory read, no probe)
+4. Tools call `get_client()` from `deapi_mcp/deapi_client.py` which reads the token from the ContextVar
+5. Token is forwarded as Bearer auth to the deAPI REST API
 
 ### Core Modules
 
@@ -49,6 +50,10 @@ The primary server is `deapi_mcp/server_remote.py` — an HTTP/SSE-based MCP ser
 - **`deapi_mcp/schemas.py`** - Pydantic models from the OpenAPI spec
 - **`deapi_mcp/config.py`** - Configuration via environment variables (prefix: `DEAPI_`)
 - **`deapi_mcp/middleware.py`** - Model cache middleware that enriches tool descriptions with available models
+- **`deapi_mcp/key_verifier.py`** - Checks a plain API key (Bearer or OAuth `client_secret`) with one free `GET account/balance`; verdict cached under an HMAC of the key (valid 10 min, invalid 60 s, unknown 15 s), one probe per key at a time. Only a 401 rejects; 5xx, 429 and timeouts let the key through. Off with `DEAPI_VERIFY_API_KEYS=false`
+- **`deapi_mcp/landing.py`** - The setup page at `GET /`: static HTML, inline CSS allowed by its hash in the CSP, no script; endpoint from `PUBLIC_BASE_URL`, tool list from the registry (`list_tools(run_middleware=False)`). Keep client snippets in step with the clients' docs
+- **`deapi_mcp/oauth_clients.py`** - Public OAuth clients: stateless DCR (`POST /register`; the `client_id` is HMAC-signed metadata) and Client ID Metadata Documents (fetched with `safe_fetch`, no redirects, 5 kB, cached 5 min). Redirect URIs match exactly; loopback `http` on any port
+- **`deapi_mcp/consent.py`** - The sign-in screen at `/authorize` for public clients: GET shows it, POST checks the key with deAPI and issues the code (key Fernet-encrypted in the code record). Signed request token between GET and POST, double-submit CSRF cookie, per-IP wrong-key limiter (Redis, in-memory fallback). The `deapi-mcp` client never sees it
 - **`deapi_mcp/auth_code_store.py`** - Single-use OAuth authorization codes: Redis when `DEAPI_REDIS_HOST` is set (any replica can redeem a code), in-memory otherwise (single replica only)
 - **`deapi_mcp/observability.py`** - Per-call outcome (`CallOutcome` on a ContextVar, `note_*` recorders, `classify`) and injectable no-op sinks; the core has no metrics dependency. `classify` labels a failed call from its most recent note; work whose failure the call survives runs inside `errors_tolerated()` (or calls `forget_api_error()` before a retry) so it never labels the call
 - **`deapi_mcp/server_remote.py`** - `register_core_tools(server)`, `create_app(server, *, metrics=None)` and `build_app()`; a deployment can import the core and inject a metrics overlay
@@ -104,6 +109,14 @@ DEAPI_API_VERSION=v2
 DEAPI_HTTP_TIMEOUT=30.0
 DEAPI_MAX_RETRIES=3
 
+# Check plain API keys against deAPI at connect (deapi_mcp/key_verifier.py)
+DEAPI_VERIFY_API_KEYS=true
+
+# OAuth for self-registering clients: DCR, CIMD and the sign-in screen (deapi_mcp/consent.py)
+DEAPI_OAUTH_PUBLIC_CLIENTS=true
+# Header with the real client IP from a trusted edge, e.g. CF-Connecting-IP (sign-in limiter)
+# DEAPI_CLIENT_IP_HEADER=CF-Connecting-IP
+
 # Per-job-type polling overrides
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
 DEAPI_POLLING_AUDIO__MAX_DELAY=5.0
@@ -146,6 +159,7 @@ through the private channel in `SECURITY.md`, never public issues.
 
 - pytest-asyncio in AUTO mode (no `@pytest.mark.asyncio` decorator needed)
 - Fixtures in `tests/conftest.py`: `mock_deapi_client`, `mock_context`, `sample_*_response`
+- The API key check is off in tests (autouse fixture in `conftest.py`) so made-up keys never reach the real API; `test_key_verifier.py` and `test_auth_matrix.py` turn it on against a fake API
 - When patching imports, patch at the source module (`deapi_mcp.deapi_client.get_client`), not the consumer
 
 ## Important Notes

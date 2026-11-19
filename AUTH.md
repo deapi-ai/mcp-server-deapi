@@ -227,8 +227,12 @@ The OAuth implementation is fully backward compatible. You can use:
    - Server issues JWT tokens
 
 2. **Direct Bearer token** (backward compatible):
-   - Use `Authorization: Bearer YOUR_DEAPI_TOKEN` header directly
+   - Use `Authorization: Bearer YOUR_DEAPI_TOKEN` header directly, or `X-API-Key: YOUR_DEAPI_TOKEN`
+     for a client that only lets you name one header (`Authorization` wins when both are sent)
    - No OAuth flow needed
+   - Never put the key in the URL: the server reads it only from these headers
+   - The key is checked once against deAPI (see [API key check](#api-key-check)); a key deAPI
+     refuses gets `401` at `initialize`
 
 Both methods work simultaneously!
 
@@ -251,6 +255,77 @@ Content-Type: application/x-www-form-urlencoded
 grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 ```
 
+### API Key Check
+
+A plain deAPI API key has no signature the server could check, so it is checked with deAPI
+instead: one free `GET /api/v2/account/balance` with the key, wherever a key first reaches
+the server:
+
+- `Authorization: Bearer <deAPI key>` on an MCP request: a refused key gets `401` with
+  `WWW-Authenticate: Bearer error="invalid_token"`, so the client asks for a new key at once
+  instead of every tool call failing later with an API error;
+- `client_secret` on `POST /token` (`authorization_code` and `client_credentials` grants): a
+  refused key gets `401 invalid_client`;
+- `grant_type=refresh_token`: the key the grant was issued for is checked again, and a key deAPI
+  now refuses (revoked or rotated) gets `400 invalid_grant`, so the client signs in again.
+
+An access token is trusted by its signature between refreshes, so a revoked key stops working
+at the latest when its access token expires (1 hour).
+
+The verdict is cached per key, under an HMAC of the key with a per-process random secret (the
+key itself is never stored or logged): an accepted key for 10 minutes, a refused one for 60
+seconds. Concurrent requests with the same key share one check.
+
+Only an explicit `401` from deAPI refuses a key. If deAPI is down, slow (5-second limit) or
+rate-limiting, the key is let through, as if the check did not exist, and that outcome is
+cached for 15 seconds. Set `DEAPI_VERIFY_API_KEYS=false` to turn the check off.
+
+### Public Clients and the Sign-in Screen
+
+Clients that cannot be given a secret by hand (hosted connectors, apps that register
+themselves) are public clients. They get a client ID in one of two ways, both advertised in
+`/.well-known/oauth-authorization-server`:
+
+- **Dynamic client registration** (`POST /register`, RFC 7591). Only public clients
+  (`token_endpoint_auth_method: none`) with the `authorization_code` / `refresh_token` grants
+  are accepted, with 1-5 redirect URIs: `https`, `http` on loopback only, or a native app's
+  private-use scheme (reverse-domain form like `com.example.app:`, or a known client's own
+  such as `cursor:`; OS protocol handlers are refused). The returned `client_id` is the
+  registration itself, signed with a key derived from `DEAPI_JWT_SECRET_KEY`: nothing is
+  stored, and any replica can verify it. Bodies are limited to 8 kB.
+- **Client ID metadata documents.** An `https` `client_id` with a path is fetched as JSON
+  (public addresses only, no redirects, 5 kB, 5 seconds in total, at most 16 at once) and
+  must name itself as `client_id`. A document is reused for 5 minutes; a failed fetch is
+  not retried for 1 minute.
+
+For a public client, `GET /authorize` shows a deAPI sign-in screen instead of redirecting at
+once. It names the application, says where the access goes (the redirect host), and warns
+about unverified (self-registered) applications, apps on this computer (loopback), apps on
+the device (native schemes) and metadata documents whose redirect is on another site. Names
+lose control and invisible characters, and a name that poses as deAPI is replaced. The user
+pastes an API key; `POST /authorize` checks it with deAPI and only then issues the code (the
+key is kept Fernet-encrypted in the 10-minute code record).
+
+Protections on the screen: the authorization request travels from the page to the form
+inside an HMAC-signed, 10-minute token; a double-submit CSRF cookie (`__Host-`, `Secure`,
+`SameSite=Strict` over https); at most 10 wrong keys per client address in 15 minutes
+(counted in Redis when configured, so shared by every replica); no script, no framing,
+`Cache-Control: no-store`, and a CSP whose `form-action` allows only this server and the
+client's own redirect target. Set `DEAPI_CLIENT_IP_HEADER` to a header your edge sets and
+clients cannot forge (for example `CF-Connecting-IP` behind Cloudflare); otherwise the
+connection address is used, which a proxy that trusts `X-Forwarded-For` blindly lets the
+client choose.
+
+At `/token`, a public client sends its `client_id` and the PKCE verifier, no secret.
+Authorization codes and refresh tokens are bound to the `client_id` they were issued to.
+Authorization responses carry `iss` (RFC 9207); a `resource` (RFC 8707) other than this
+server's `/mcp` is refused with `invalid_target`. `DEAPI_OAUTH_PUBLIC_CLIENTS=false` turns
+all of this off and leaves only `deapi-mcp`.
+
+A key deAPI refuses on a real call (revoked or deleted after sign-in) ends the session: the
+next request is refused with `401 invalid_token` and the refresh with `invalid_grant`, so
+the client opens the sign-in screen again.
+
 ### JWT Signing Key
 
 - **Development** (loopback only): Ephemeral key generated at startup (tokens invalid after restart)
@@ -262,13 +337,29 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 - No server-side token storage (authorization codes are kept for at most 10 minutes, then burnt on use)
 - JWT contains the deAPI token (Fernet-encrypted within the JWT payload)
 - Server verifies JWT signature on each request
-- deAPI API validates the embedded token
+- A plain key is checked with deAPI once and the verdict cached (see above)
+- deAPI API validates the embedded token on every call
 
 ### Client ID Validation
 
-- Only `client_id=deapi-mcp` is accepted
-- This prevents unauthorized OAuth clients
+- `client_id=deapi-mcp` is the pre-registered client, with the API key as its secret; it gets
+  no sign-in screen
+- Any other `client_id` must be a dynamically registered client or a client ID metadata
+  document URL (see [Public Clients](#public-clients-and-the-sign-in-screen)); anything else is
+  refused with `unauthorized_client` and never redirected
+- `/token` takes the client credentials in the form (`client_secret_post`) or in an
+  `Authorization: Basic` header (`client_secret_basic`); token responses are never cached
+  (`Cache-Control: no-store`)
 - Can be customized in `deapi_mcp/oauth_endpoints.py`
+
+### Redirect URIs and PKCE
+
+- `redirect_uri` must use `http` or `https`, except Cursor's documented callback
+  `cursor://anysphere.cursor-mcp/oauth/callback`, accepted as that exact string. `javascript:`,
+  `data:` and every other scheme are refused without a redirect
+- `/token` requires the same `redirect_uri` as `/authorize`, character for character
+- PKCE is mandatory and S256 only: `code_challenge_method=S256` and a 43-character base64url
+  `code_challenge`; `plain` is refused
 
 ## Troubleshooting
 
@@ -287,6 +378,16 @@ grant_type=refresh_token&client_id=deapi-mcp&refresh_token=eyJhbGc...
 
 - Token too short (< 10 characters)
 - Check that you're using your actual deAPI API token
+
+### "client_secret was rejected by deAPI (invalid API key)"
+
+- deAPI does not know the key, or it was revoked
+- Create or copy a key at https://app.deapi.ai/settings/api-keys and connect again
+
+### `401 invalid_token` with a plain Bearer key
+
+- deAPI refused the key at connect (see [API key check](#api-key-check))
+- A key fixed or re-enabled on the deAPI side is accepted again within 60 seconds
 
 ### Server logs don't show OAuth endpoints
 

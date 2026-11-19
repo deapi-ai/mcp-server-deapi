@@ -85,6 +85,32 @@ class Settings(BaseSettings):
         description="Seconds one tool call waits for its job before returning the job_id to resume with",
     )
 
+    # Plain API key check (deapi_mcp/key_verifier.py). A key sent as a bearer token
+    # or as the OAuth client_secret is checked once against the API (cached), so a
+    # wrong key is refused with 401 at connect instead of failing every tool call.
+    # An API outage lets keys through, as without the check.
+    verify_api_keys: bool = Field(
+        default=True,
+        description="Check plain deAPI API keys against the API before accepting them",
+    )
+
+    # OAuth for clients that register themselves (RFC 7591) or identify by a client ID
+    # metadata document: they get a sign-in screen at /authorize where the user enters an
+    # API key. The pre-registered deapi-mcp client works either way.
+    oauth_public_clients: bool = Field(
+        default=True,
+        description="Offer dynamic client registration, CIMD and the sign-in screen",
+    )
+
+    # The header that carries the real client address, set by the edge and impossible for a
+    # client to forge (for example CF-Connecting-IP when all traffic comes through
+    # Cloudflare). Used to count wrong keys on the sign-in screen. Unset: the connection's
+    # address, which a proxy trusting X-Forwarded-For blindly lets the client choose.
+    client_ip_header: str | None = Field(
+        default=None,
+        description="Header with the real client IP, set by a trusted edge proxy",
+    )
+
     # Tool Description Enrichment
     enrich_tool_descriptions: bool = Field(
         default=True,

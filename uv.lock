@@ -485,7 +485,7 @@ wheels = [
 
 [[package]]
 name = "deapi-mcp"
-version = "0.6.3"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -516,7 +516,7 @@ dev = [
 requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
     { name = "cryptography", specifier = ">=42.0.0" },
-    { name = "deapi-sdk", url = "https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.2.tar.gz" },
+    { name = "deapi-sdk", specifier = ">=0.6.1,<0.7" },
     { name = "fakeredis", extras = ["lua"], marker = "extra == 'dev'", specifier = ">=2.26" },
     { name = "fastmcp", specifier = ">=4.0.4,<5" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -537,27 +537,16 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "deapi-sdk"
-version = "0.5.2"
-source = { url = "https://github.com/deapi-ai/deapi-python-sdk/archive/refs/tags/v0.5.2.tar.gz" }
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { hash = "sha256:62ea5dc4012fdb15a4632f09c21c853adeb721cca32ace7b8a3923b0e2de2cf0" }
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.25.0,<1.0.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5" },
-    { name = "pydantic", specifier = ">=2.6.0,<3.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.21" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.21" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1" },
-    { name = "websockets", marker = "extra == 'dev'", specifier = ">=17.0,<18" },
-    { name = "websockets", marker = "extra == 'ws'", specifier = ">=17.0,<18" },
+sdist = { url = "https://files.pythonhosted.org/packages/13/78/44fa9079d05945f3714c062ad24e112318debeb813f958b246904f8a5037/deapi_sdk-0.6.1.tar.gz", hash = "sha256:f8d1ba1ee73a00f35b6e75acf4efbd9fbb2f0b5f80d95020fa5137d1ffbc3bba", size = 129119, upload-time = "2026-11-19T12:35:43.91Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/34/ba0c2f436d09a6e5ad3f666f4e315b14e05dc3925078af1fd0622de295d1/deapi_sdk-0.6.1-py3-none-any.whl", hash = "sha256:0914d7438f4690a1837cf792cbf3235418792f913f5cb30690036246dad0e061", size = 81370, upload-time = "2026-11-19T12:35:42.525Z" },
 ]
-provides-extras = ["ws", "dev"]
 
 [[package]]
 name = "dnspython"

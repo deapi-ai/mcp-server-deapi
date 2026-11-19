@@ -89,7 +89,17 @@ Generation parameters such as `width`, `height`, `steps`, `frames` and `fps` def
 - Sign up at [app.deapi.ai](https://app.deapi.ai/register) and create an API token at
   [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys)
 
-### Setup
+### Install from PyPI
+
+```bash
+pip install deapi-mcp
+# or run it without installing:
+uvx deapi-mcp
+```
+
+The `deapi-mcp` command starts the HTTP server (see [Running the Server](#running-the-server)).
+
+### Setup from source
 
 1. Clone the repository:
 ```bash
@@ -162,7 +172,7 @@ See the [Remote Deployment](#remote-deployment) section for production deploymen
 Both Claude Desktop and Claude.ai support MCP connectors with built-in OAuth authentication.
 
 1. Get your deAPI token from [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys)
-2. In Claude Desktop or Claude.ai, go to **Settings → Connectors → Add Connector**
+2. In Claude Desktop or Claude.ai, go to **Customize → Connectors → Add custom connector**
 3. Fill in the connector details:
 
 ```
@@ -176,32 +186,29 @@ OAuth Client Secret: YOUR_DEAPI_TOKEN
 
 4. Click **Add** — Claude will automatically authenticate via OAuth and discover all tools.
 
-For details on the OAuth flow, see [AUTH.md](AUTH.md).
+For details on the OAuth flow, see [AUTH.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/AUTH.md).
 
 ---
 
-#### Option 2: Config File with Bearer Token (Local Development)
+#### Option 2: Request Headers (no OAuth)
 
-**Best for:** Server running on the same machine, quick setup without OAuth.
+Where your Claude plan offers **Request headers** for custom connectors, add the connector with
+no sign-in and the header `Authorization: Bearer YOUR_DEAPI_TOKEN`.
 
-Edit your Claude Desktop config file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+Claude Desktop takes remote servers from **Connectors** only: its `claude_desktop_config.json`
+runs local (stdio) servers and is not the place for this server's URL.
 
-```json
-{
-  "mcpServers": {
-    "deapi": {
-      "url": "http://localhost:8000/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_DEAPI_TOKEN"
-      }
-    }
-  }
-}
-```
+#### Other clients
 
-Replace `YOUR_DEAPI_TOKEN` with your actual deAPI token. Save the file and restart Claude Desktop.
+Open the server's root URL (`https://your-server-domain/`) in a browser: it shows the endpoint
+and a ready-to-copy setup for Claude, ChatGPT, Claude Code, Cursor, VS Code, Codex CLI and
+Gemini CLI.
+Any client that speaks Streamable HTTP works with the endpoint `/mcp` and one of these headers:
+
+- `Authorization: Bearer <your deAPI API key>`
+- `X-API-Key: <your deAPI API key>`
+
+A key deAPI does not accept is refused with `401` when the client connects.
 
 ### Using the Tools
 
@@ -233,7 +240,7 @@ Use audio_transcription with:
 - include_ts: true
 ```
 
-**Note**: When calling tools via Claude Desktop or MCP SDK, authentication is handled automatically through the server connection (OAuth or HTTP headers). See [AUTH.md](AUTH.md) for detailed OAuth setup.
+**Note**: When calling tools via Claude Desktop or MCP SDK, authentication is handled automatically through the server connection (OAuth or HTTP headers). See [AUTH.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/AUTH.md) for detailed OAuth setup.
 
 ## Architecture
 
@@ -279,7 +286,7 @@ Polling uses exponential backoff with a configurable multiplier (default: 1.5x,
 Configuration can be set via environment variables (prefixed with `DEAPI_`). A variable set to
 an empty value (`DEAPI_REDIS_PORT=`) counts as unset and takes the default. Comments go on their
 own line: some tools (`docker --env-file`, `kubectl create configmap --from-env-file`) keep text
-after a value, `# ...` included, as part of that value. [`.env.example`](.env.example) lists
+after a value, `# ...` included, as part of that value. [`.env.example`](https://github.com/deapi-ai/mcp-server-deapi/blob/main/.env.example) lists
 every variable with its default; the block below shows the common ones.
 
 ```bash
@@ -293,6 +300,14 @@ DEAPI_MAX_RETRIES=3
 
 # Seconds one tool call waits before returning done=false and the job_id
 DEAPI_TOOL_MAX_WAIT=45.0
+
+# Check a plain API key against deAPI at connect (cached; an API outage lets keys through)
+DEAPI_VERIFY_API_KEYS=true
+
+# OAuth for self-registering clients (DCR, CIMD) with a deAPI sign-in screen
+DEAPI_OAUTH_PUBLIC_CLIENTS=true
+# Header with the real client IP from a trusted edge (limits wrong keys on the sign-in screen)
+# DEAPI_CLIENT_IP_HEADER=CF-Connecting-IP
 
 # Polling Configuration (override defaults)
 DEAPI_POLLING_AUDIO__INITIAL_DELAY=1.0
@@ -330,7 +345,7 @@ MCP_GRACEFUL_SHUTDOWN_SECONDS=930
 # FORWARDED_ALLOW_IPS=*
 ```
 
-With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally. A replayed delivery (same `delivery_id`) wakes nobody twice. The job registry is in process memory by default; with several replicas, see [DEPLOYMENT.md](DEPLOYMENT.md#running-more-than-one-replica).
+With internal webhooks on, every job the server submits carries its own receiver URL and the API calls back the moment the job ends; the waiting tool wakes at once, with a slow poll underneath as a safety net. A caller-supplied `webhook_url` takes precedence for that job (the API takes one webhook per job), which then polls normally. A replayed delivery (same `delivery_id`) wakes nobody twice. The job registry is in process memory by default; with several replicas, see [DEPLOYMENT.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/DEPLOYMENT.md#running-more-than-one-replica).
 
 ## Development
 
@@ -389,6 +404,12 @@ Run smoke tests (requires a running server):
 python tests/smoke_test.py
 ```
 
+Run the authentication end-to-end matrix in Docker (server image against a fake deAPI API):
+```bash
+docker compose -f tests/e2e/docker-compose.yml up --build --exit-code-from e2e
+docker compose -f tests/e2e/docker-compose.yml down
+```
+
 ### Code Formatting
 
 Format code with Black:
@@ -441,12 +462,12 @@ The package ships type information (`py.typed`) and exposes `deapi_mcp.__version
 
 **Important**: The MCP server does NOT store API tokens. Authentication works as follows:
 
-1. **For Remote HTTP Server**: Authentication is handled via OAuth 2.0 (Authorization Code with PKCE) or HTTP headers (Authorization: Bearer token)
+1. **For Remote HTTP Server**: Authentication is handled via OAuth 2.0 (Authorization Code with PKCE) or HTTP headers (`Authorization: Bearer <key>` or `X-API-Key: <key>`); the key is never read from the URL
 2. **Token forwarding**: The server forwards authentication to the deAPI API for each request
 3. **No persistence**: Tokens are used only for the specific request and never persisted or logged
 4. **Per-connection auth**: Tools do NOT accept `deapi_api_token` parameters - authentication is managed at the connection level
 
-Always keep your API tokens secure and never commit them to version control. See [AUTH.md](AUTH.md) for detailed OAuth setup.
+Always keep your API tokens secure and never commit them to version control. See [AUTH.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/AUTH.md) for detailed OAuth setup.
 
 ## Remote Deployment
 
@@ -523,7 +544,7 @@ server {
 - **DigitalOcean**: Use App Platform or Droplets with Docker
 - **AWS/GCP/Azure**: Deploy with container services (ECS, Cloud Run, Container Instances)
 
-For detailed deployment instructions, security considerations, monitoring, and troubleshooting, see [DEPLOYMENT.md](DEPLOYMENT.md).
+For detailed deployment instructions, security considerations, monitoring, and troubleshooting, see [DEPLOYMENT.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/DEPLOYMENT.md).
 
 ## Troubleshooting
 
@@ -559,17 +580,17 @@ If remote MCP connection fails:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/deapi-ai/mcp-server-deapi/blob/main/LICENSE) file for details.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/CHANGELOG.md).
 
 ## Support
 
 For issues related to:
 - **This MCP Server**: [Open an issue](https://github.com/deapi-ai/mcp-server-deapi/issues)
-- **A security vulnerability**: do not open a public issue; see [SECURITY.md](SECURITY.md)
+- **A security vulnerability**: do not open a public issue; see [SECURITY.md](https://github.com/deapi-ai/mcp-server-deapi/blob/main/SECURITY.md)
 - **deAPI Platform**: Visit [docs.deapi.ai](https://docs.deapi.ai/)
 - **MCP Protocol**: Visit [modelcontextprotocol.io](https://modelcontextprotocol.io)
 <!-- mcp-name: io.github.deapi-ai/mcp-server-deapi -->

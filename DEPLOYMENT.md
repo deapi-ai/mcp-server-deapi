@@ -242,11 +242,15 @@ mcp-server-deapi.yourdomain.com {
 ### 2. Authentication
 
 Every MCP request must carry a deAPI token, either directly (`Authorization: Bearer <deAPI token>`)
-or as an access token from the built-in OAuth 2.0 server; unauthenticated calls get `401`. The
-server never stores tokens. See [AUTH.md](AUTH.md).
+or as an access token from the built-in OAuth 2.0 server; unauthenticated calls get `401`. A
+plain key is checked once with deAPI and a key it refuses also gets `401`; the server must be
+able to reach the deAPI API for that (when it cannot, keys are let through). The server never
+stores tokens. See [AUTH.md](AUTH.md).
 
 If the server sits behind a proxy, set `FORWARDED_ALLOW_IPS` to that proxy's address so only it
-can set `X-Forwarded-*` headers (the default `*` trusts any client).
+can set `X-Forwarded-*` headers (the default `*` trusts any client). Behind Cloudflare, also set
+`DEAPI_CLIENT_IP_HEADER=CF-Connecting-IP`, so the limit on wrong keys at the OAuth sign-in
+screen counts real client addresses, not ones a client wrote into `X-Forwarded-For`.
 
 Behind a proxy, also set `PUBLIC_BASE_URL` to the public URL (`https://mcp.example.com`). The
 401 challenge's `resource_metadata` is built from it, and without it points at the bind

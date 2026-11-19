@@ -19,14 +19,16 @@ Flow (Authorization Code):
 """
 
 import base64
+import binascii
 import hashlib
 import logging
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 import jwt
 from cryptography.fernet import Fernet
@@ -37,6 +39,10 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from . import auth_code_store
 from .auth_code_store import AUTHORIZATION_CODE_MAX_ENTRIES, AuthCodeStoreUnavailable
 from .config import settings
+from .consent import error_page as consent_error_page
+from .consent import show_consent, submit_consent
+from .key_verifier import is_api_key_rejected
+from .oauth_clients import OAuthClient, looks_like_public_client_id, resolve_client
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +57,14 @@ CODE_STORE_RETRY_AFTER_SECONDS = 5
 
 # Allowed redirect URI schemes (prevent javascript:, data:, etc.)
 ALLOWED_REDIRECT_SCHEMES = {"http", "https"}
+# Native-app callbacks on a private-use scheme (RFC 8252 §7.1), accepted only as these
+# exact strings. Cursor's documented callback for a pre-registered OAuth client.
+ALLOWED_NATIVE_REDIRECT_URIS = frozenset({"cursor://anysphere.cursor-mcp/oauth/callback"})
+# An S256 code_challenge is the unpadded base64url of a SHA-256 digest: 43 characters.
+S256_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
+# RFC 6749 §5.1: token responses must not be cached.
+NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+DOCS_URL = "https://docs.deapi.ai/execution-modes-and-integrations/mcp-server"
 
 # JWT signing key - derive from environment or generate
 # In production, set DEAPI_JWT_SECRET_KEY environment variable
@@ -131,10 +145,53 @@ def decrypt_token(encrypted_token: str) -> str:
     return _get_fernet().decrypt(encrypted_token.encode()).decode()
 
 
+def issuer_url(request: Request) -> str:
+    """This server's public base URL: PUBLIC_BASE_URL, else the request's own."""
+    return (os.getenv("PUBLIC_BASE_URL") or f"{request.url.scheme}://{request.url.netloc}").rstrip(
+        "/"
+    )
+
+
+def resource_is_ours(resource: Optional[str], request: Request) -> bool:
+    """RFC 8707: a ``resource`` the client names must be this MCP server.
+
+    Host and path decide; scheme and port do not, so a proxy that hides the original
+    scheme (``http`` behind TLS termination) cannot turn a correct request away.
+    """
+    if not resource:
+        return True
+    try:
+        named = urlparse(resource)
+        ours = urlparse(issuer_url(request))
+    except ValueError:
+        return False
+    if (named.hostname or "").lower() != (ours.hostname or "").lower():
+        return False
+    return named.path.rstrip("/") in ("", "/mcp")
+
+
+def authorization_redirect(
+    request: Request,
+    redirect_uri: str,
+    params: dict[str, str],
+    state: Optional[str],
+    status_code: int = 307,
+) -> RedirectResponse:
+    """Redirect back to the client with ``params``, its ``state`` and our ``iss`` (RFC 9207)."""
+    query = dict(params)
+    if state:
+        query["state"] = state
+    query["iss"] = issuer_url(request)
+    separator = "&" if "?" in redirect_uri else "?"
+    return RedirectResponse(f"{redirect_uri}{separator}{urlencode(query)}", status_code=status_code)
+
+
 def _validate_redirect_uri(redirect_uri: str) -> bool:
     """Validate that a redirect URI uses an allowed scheme.
 
     Prevents open redirect attacks via javascript:, data:, or other dangerous schemes.
+    A private-use scheme is accepted only for the exact native-app callbacks listed in
+    ALLOWED_NATIVE_REDIRECT_URIS.
 
     Args:
         redirect_uri: The redirect URI to validate
@@ -142,6 +199,8 @@ def _validate_redirect_uri(redirect_uri: str) -> bool:
     Returns:
         True if the URI uses an allowed scheme
     """
+    if redirect_uri in ALLOWED_NATIVE_REDIRECT_URIS:
+        return True
     try:
         parsed = urlparse(redirect_uri)
         return parsed.scheme.lower() in ALLOWED_REDIRECT_SCHEMES and bool(parsed.netloc)
@@ -292,7 +351,7 @@ async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
         # Derive from request (works for direct connections)
         base_url = f"{request.url.scheme}://{request.url.netloc}"
 
-    metadata = {
+    metadata: dict[str, Any] = {
         "issuer": base_url,
         "authorization_endpoint": f"{base_url}/authorize",
         "token_endpoint": f"{base_url}/token",
@@ -301,8 +360,19 @@ async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
         "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": [],  # No scopes for our use case
-        "service_documentation": "https://api.deapi.ai",
+        "authorization_response_iss_parameter_supported": True,
+        "service_documentation": DOCS_URL,
     }
+    if settings.oauth_public_clients:
+        # Clients that register themselves (DCR) or are identified by a metadata URL (CIMD)
+        # are public: no secret, PKCE, and the user signs in with a key on our screen.
+        metadata["registration_endpoint"] = f"{base_url}/register"
+        metadata["client_id_metadata_document_supported"] = True
+        metadata["token_endpoint_auth_methods_supported"] = [
+            "none",
+            "client_secret_post",
+            "client_secret_basic",
+        ]
 
     return JSONResponse(metadata)
 
@@ -350,7 +420,45 @@ def _form_str(form: FormData, key: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def _basic_credentials(request: Request) -> Optional[tuple[str, str]]:
+    """The client_id and client_secret from an ``Authorization: Basic`` header.
+
+    RFC 6749 §2.3.1 (``client_secret_basic``): base64 of ``id:secret``, each part
+    form-urlencoded first. Returns None when there is no Basic header; raises
+    ValueError when there is one that cannot be decoded.
+    """
+    header = request.headers.get("authorization", "")
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "basic":
+        return None
+    try:
+        decoded = base64.b64decode(value.strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise ValueError("malformed Basic credentials") from exc
+    client_id, sep, client_secret = decoded.partition(":")
+    if not sep:
+        raise ValueError("malformed Basic credentials")
+    # unquote, not unquote_plus: a client that skips the encoding step must not have a
+    # literal '+' in the key turned into a space.
+    return unquote(client_id), unquote(client_secret)
+
+
 async def token_endpoint(request: Request) -> JSONResponse:
+    """OAuth 2.0 token endpoint: the grant handling below, plus the headers every answer needs.
+
+    Token responses are never cached (RFC 6749 §5.1), and a client that authenticated with
+    HTTP Basic and failed gets the Basic challenge back (RFC 6749 §5.2).
+    """
+    response = await _token_response(request)
+    response.headers.update(NO_STORE_HEADERS)
+    if response.status_code == 401 and request.headers.get("authorization", "").lower().startswith(
+        "basic "
+    ):
+        response.headers["WWW-Authenticate"] = f'Basic realm="{DEFAULT_CLIENT_ID}"'
+    return response
+
+
+async def _token_response(request: Request) -> JSONResponse:
     """OAuth 2.0 Token endpoint for Authorization Code, Client Credentials, and Refresh Token grants.
 
     Mounted at: /token
@@ -371,6 +479,10 @@ async def token_endpoint(request: Request) -> JSONResponse:
        - refresh_token: refresh token from previous token response
        - client_id: "deapi-mcp"
 
+    The client authenticates with client_id and client_secret in the form
+    (``client_secret_post``) or in an ``Authorization: Basic`` header
+    (``client_secret_basic``); the header wins when both are sent.
+
     Returns JWT containing the Deapi token, plus a refresh token for non-refresh grants.
 
     Args:
@@ -384,6 +496,23 @@ async def token_endpoint(request: Request) -> JSONResponse:
     grant_type = _form_str(form_data, "grant_type")
     client_id = _form_str(form_data, "client_id")
     client_secret = _form_str(form_data, "client_secret")
+    try:
+        basic = _basic_credentials(request)
+    except ValueError:
+        return JSONResponse(
+            {"error": "invalid_client", "error_description": "Malformed Basic credentials"},
+            status_code=401,
+        )
+    if basic is not None:
+        if client_id and client_id != basic[0]:
+            return JSONResponse(
+                {
+                    "error": "invalid_request",
+                    "error_description": "client_id in the form and in Basic credentials differ",
+                },
+                status_code=400,
+            )
+        client_id, client_secret = basic
 
     # Validate grant_type
     if grant_type not in ["authorization_code", "client_credentials", "refresh_token"]:
@@ -395,15 +524,36 @@ async def token_endpoint(request: Request) -> JSONResponse:
             status_code=400,
         )
 
-    # Validate client_id
-    if not client_id or client_id != DEFAULT_CLIENT_ID:
+    # Validate client_id: the pre-registered client, or a public one (CIMD / DCR)
+    public_client: Optional[OAuthClient] = None
+    if client_id and client_id != DEFAULT_CLIENT_ID and settings.oauth_public_clients:
+        public_client = await resolve_client(client_id)
+    if not client_id or (client_id != DEFAULT_CLIENT_ID and public_client is None):
         return JSONResponse(
             {
                 "error": "invalid_client",
-                "error_description": f"Invalid client_id. Use '{DEFAULT_CLIENT_ID}'",
+                "error_description": "Unknown client_id: register the client, use a client ID "
+                f"metadata document, or use '{DEFAULT_CLIENT_ID}' with your API key as secret",
             },
             status_code=401,
         )
+    if public_client is not None and grant_type == "client_credentials":
+        return JSONResponse(
+            {
+                "error": "unauthorized_client",
+                "error_description": "A public client cannot use client_credentials",
+            },
+            status_code=400,
+        )
+    if not resource_is_ours(_form_str(form_data, "resource"), request):
+        if public_client is None:
+            # 0.6.x ignored resource; keep the pre-registered client working, but say so
+            logger.warning("Token request for client deapi-mcp names another resource")
+        else:
+            return JSONResponse(
+                {"error": "invalid_target", "error_description": "resource is not this MCP server"},
+                status_code=400,
+            )
 
     # Handle refresh_token grant
     if grant_type == "refresh_token":
@@ -421,6 +571,14 @@ async def token_endpoint(request: Request) -> JSONResponse:
             logger.error("Invalid or expired refresh token")
             return JSONResponse(
                 {"error": "invalid_grant", "error_description": "Invalid or expired refresh token"},
+                status_code=400,
+            )
+
+        # A refresh token belongs to the client it was issued to
+        if payload.get("sub") != client_id:
+            logger.warning("Refresh token presented by another client")
+            return JSONResponse(
+                {"error": "invalid_grant", "error_description": "Invalid refresh token"},
                 status_code=400,
             )
 
@@ -442,29 +600,21 @@ async def token_endpoint(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        # Create new access token (and optionally rotate refresh token)
-        try:
-            access_token = create_jwt(deapi_token, client_id)
-            # Issue a new refresh token (token rotation for security)
-            new_refresh_token = create_refresh_token(deapi_token, client_id)
-        except Exception as e:
-            logger.error(f"Failed to create tokens: {str(e)}")
+        # The grant carries the key it was issued for. A key deAPI now refuses (revoked
+        # or rotated) ends the grant, so the client signs in again with a working key
+        # instead of minting access tokens no tool call can use.
+        if await is_api_key_rejected(deapi_token):
+            logger.warning("Refresh with an API key deAPI rejects")
             return JSONResponse(
                 {
-                    "error": "server_error",
-                    "error_description": f"Failed to create tokens: {str(e)}",
+                    "error": "invalid_grant",
+                    "error_description": "The API key of this grant was rejected by deAPI; "
+                    "authorize again",
                 },
-                status_code=500,
+                status_code=400,
             )
 
-        return JSONResponse(
-            {
-                "access_token": access_token,
-                "token_type": "Bearer",
-                "expires_in": JWT_EXPIRATION_SECONDS,
-                "refresh_token": new_refresh_token,
-            }
-        )
+        return _token_success(deapi_token, client_id)
 
     # Handle authorization_code grant
     if grant_type == "authorization_code":
@@ -512,9 +662,19 @@ async def token_endpoint(request: Request) -> JSONResponse:
                 status_code=400,
             )
 
-        # Verify redirect_uri matches
-        if redirect_uri != auth_data["redirect_uri"]:
-            logger.error(f"Redirect URI mismatch: {redirect_uri} vs {auth_data['redirect_uri']}")
+        # A code belongs to the client it was issued to
+        if auth_data.get("client_id") != client_id:
+            logger.warning("Authorization code presented by another client")
+            return JSONResponse(
+                {"error": "invalid_grant", "error_description": "Invalid authorization code"},
+                status_code=400,
+            )
+
+        # Verify redirect_uri matches. RFC 6749 §4.1.3: required here only when the
+        # authorization request carried one; when it was left out, it may be left out again.
+        supplied = auth_data.get("redirect_uri_supplied", True)
+        if (supplied or redirect_uri is not None) and redirect_uri != auth_data["redirect_uri"]:
+            logger.error("Redirect URI mismatch: %r vs %r", redirect_uri, auth_data["redirect_uri"])
             return JSONResponse(
                 {"error": "invalid_grant", "error_description": "redirect_uri mismatch"},
                 status_code=400,
@@ -534,6 +694,18 @@ async def token_endpoint(request: Request) -> JSONResponse:
                 {"error": "invalid_grant", "error_description": "Invalid code_verifier"},
                 status_code=400,
             )
+
+        if public_client is not None:
+            # The key came from the sign-in screen, where it was already checked
+            try:
+                deapi_token = decrypt_token(str(auth_data["key_enc"]))
+            except Exception:
+                logger.error("Authorization code without a usable key")
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "Invalid authorization code"},
+                    status_code=400,
+                )
+            return _token_success(deapi_token, client_id)
 
         # Client secret IS the Deapi token
         if not client_secret or len(client_secret) < 10:
@@ -570,7 +742,23 @@ async def token_endpoint(request: Request) -> JSONResponse:
 
         deapi_token = client_secret
 
-    # Create JWT containing the Deapi token and refresh token
+    # The secret IS the deAPI key: ask the API once whether it knows it, so a wrong
+    # key fails here, where the client can show it, not on every later tool call.
+    if await is_api_key_rejected(deapi_token):
+        logger.warning("Token request with a client_secret deAPI rejects")
+        return JSONResponse(
+            {
+                "error": "invalid_client",
+                "error_description": "client_secret was rejected by deAPI (invalid API key)",
+            },
+            status_code=401,
+        )
+
+    return _token_success(deapi_token, client_id)
+
+
+def _token_success(deapi_token: str, client_id: str) -> JSONResponse:
+    """An access token and a refresh token for ``client_id``, both carrying the key."""
     try:
         access_token = create_jwt(deapi_token, client_id)
         refresh_token = create_refresh_token(deapi_token, client_id)
@@ -583,8 +771,6 @@ async def token_endpoint(request: Request) -> JSONResponse:
             },
             status_code=500,
         )
-
-    # Return OAuth token response with refresh token
     return JSONResponse(
         {
             "access_token": access_token,
@@ -613,83 +799,128 @@ def verify_pkce_challenge(code_verifier: str, code_challenge: str) -> bool:
 
 
 async def authorize_endpoint(request: Request) -> Response:
-    """OAuth 2.0 Authorization endpoint.
+    """OAuth 2.0 authorization endpoint (``GET`` and, for the sign-in form, ``POST``).
 
-    Mounted at: /authorize
+    - ``client_id=deapi-mcp`` (pre-registered; the API key is its secret at /token): the
+      code is issued at once and the browser is sent straight back, as before.
+    - Any other client_id, when public clients are enabled, must be a client ID metadata
+      document URL or a dynamically registered client: the user signs in with an API key
+      on the screen in ``consent.py``, which posts back here.
 
-    Receives authorization request from Claude Desktop, immediately
-    generates an authorization code and redirects back.
-
-    Query parameters:
-    - client_id: must be "deapi-mcp"
-    - redirect_uri: where to redirect with authorization code
-    - state: opaque value from client
-    - code_challenge: PKCE challenge
-    - code_challenge_method: should be "S256"
-    - response_type: should be "code"
-
-    Returns:
-        Redirect response to redirect_uri with authorization code
+    Query parameters: client_id, redirect_uri, state, code_challenge,
+    code_challenge_method (S256), response_type (code), resource (optional, RFC 8707).
     """
-    # Extract query parameters
+    if request.method == "POST":
+        if not settings.oauth_public_clients:
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "Unsupported method"},
+                status_code=405,
+            )
+        return await submit_consent(request)
+
     client_id = request.query_params.get("client_id")
     redirect_uri = request.query_params.get("redirect_uri")
     state = request.query_params.get("state")
     code_challenge = request.query_params.get("code_challenge")
     code_challenge_method = request.query_params.get("code_challenge_method")
     response_type = request.query_params.get("response_type")
+    resource = request.query_params.get("resource")
 
-    # Validate client_id
-    if not client_id or client_id != DEFAULT_CLIENT_ID:
-        logger.error(f"Invalid client_id: {client_id}")
+    public_client: Optional[OAuthClient] = None
+    redirect_uri_supplied = True
+    if settings.oauth_public_clients and looks_like_public_client_id(client_id):
+        public_client = await resolve_client(client_id)
+        if public_client is None:
+            return consent_error_page(
+                "This application is not registered with deAPI MCP, or its registration could "
+                "not be read."
+            )
+        if not redirect_uri and len(public_client.redirect_uris) == 1:
+            redirect_uri = public_client.redirect_uris[0]
+            redirect_uri_supplied = False
+        if not redirect_uri or not public_client.allows_redirect(redirect_uri):
+            # Never redirect to a URI the client did not register (open redirect)
+            return consent_error_page(
+                "The application asked to return to an address it has not registered."
+            )
+    elif not client_id or client_id != DEFAULT_CLIENT_ID:
+        logger.error("Invalid client_id: %r", (client_id or "")[:80])
         # RFC 6749 4.1.2.1: never redirect to a redirect_uri that is not tied to a valid
         # client (open redirect), so answer directly.
         return JSONResponse(
             {"error": "unauthorized_client", "error_description": "Invalid client_id"},
             status_code=400,
         )
+    else:
+        if not redirect_uri:
+            logger.error("Missing redirect_uri")
+            return JSONResponse(
+                {"error": "invalid_request", "error_description": "redirect_uri is required"},
+                status_code=400,
+            )
+        if not _validate_redirect_uri(redirect_uri):
+            logger.error("Invalid redirect_uri scheme: %r", redirect_uri[:200])
+            return JSONResponse(
+                {
+                    "error": "invalid_request",
+                    "error_description": "redirect_uri must use http or https scheme",
+                },
+                status_code=400,
+            )
 
-    # Validate redirect_uri
-    if not redirect_uri:
-        logger.error("Missing redirect_uri")
-        return JSONResponse(
-            {"error": "invalid_request", "error_description": "redirect_uri is required"},
-            status_code=400,
-        )
-
-    if not _validate_redirect_uri(redirect_uri):
-        logger.error("Invalid redirect_uri scheme: %s", redirect_uri)
-        return JSONResponse(
-            {
-                "error": "invalid_request",
-                "error_description": "redirect_uri must use http or https scheme",
-            },
-            status_code=400,
-        )
-
-    # Validate response_type
+    # From here on the redirect URI is trusted for this client, so errors go back to it
     if response_type != "code":
-        logger.error(f"Invalid response_type: {response_type}")
-        error_params = {
-            "error": "unsupported_response_type",
-            "error_description": "Only 'code' response_type is supported",
-        }
-        if state:
-            error_params["state"] = state
-        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
+        logger.error("Invalid response_type: %s", response_type)
+        return authorization_redirect(
+            request,
+            redirect_uri,
+            {
+                "error": "unsupported_response_type",
+                "error_description": "Only 'code' response_type is supported",
+            },
+            state,
+        )
 
-    # Validate PKCE challenge
-    if not code_challenge or code_challenge_method != "S256":
-        logger.error(f"Invalid PKCE: challenge={code_challenge}, method={code_challenge_method}")
-        error_params = {
-            "error": "invalid_request",
-            "error_description": "PKCE with S256 is required",
-        }
-        if state:
-            error_params["state"] = state
-        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
+    # PKCE: S256 only (no "plain"), and a well-formed S256 value
+    if (
+        not code_challenge
+        or code_challenge_method != "S256"
+        or not S256_CHALLENGE.fullmatch(code_challenge)
+    ):
+        logger.error("Invalid PKCE: method=%s", code_challenge_method)
+        return authorization_redirect(
+            request,
+            redirect_uri,
+            {"error": "invalid_request", "error_description": "PKCE with S256 is required"},
+            state,
+        )
 
-    # Generate authorization code
+    if not resource_is_ours(resource, request) and public_client is None:
+        logger.warning("Authorization request for client deapi-mcp names another resource")
+    elif not resource_is_ours(resource, request):
+        return authorization_redirect(
+            request,
+            redirect_uri,
+            {"error": "invalid_target", "error_description": "resource is not this MCP server"},
+            state,
+        )
+
+    if public_client is not None:
+        return await show_consent(
+            request,
+            public_client,
+            redirect_uri,
+            {
+                "client_id": public_client.client_id,
+                "redirect_uri": redirect_uri,
+                "redirect_uri_supplied": redirect_uri_supplied,
+                "state": state,
+                "code_challenge": code_challenge,
+                "resource": resource,
+            },
+        )
+
+    # Pre-registered client: issue the code at once
     auth_code = secrets.token_urlsafe(32)
     expires_at = time.time() + AUTHORIZATION_CODE_EXPIRATION_SECONDS
 
@@ -702,6 +933,7 @@ async def authorize_endpoint(request: Request) -> Response:
                 "code_challenge": code_challenge,
                 "expires_at": expires_at,
                 "state": state,
+                "resource": resource,
             },
             AUTHORIZATION_CODE_EXPIRATION_SECONDS,
         )
@@ -712,13 +944,15 @@ async def authorize_endpoint(request: Request) -> Response:
             type(cause).__name__,
             cause,
         )
-        error_params = {
-            "error": "temporarily_unavailable",
-            "error_description": "Authorization temporarily unavailable, try again",
-        }
-        if state:
-            error_params["state"] = state
-        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
+        return authorization_redirect(
+            request,
+            redirect_uri,
+            {
+                "error": "temporarily_unavailable",
+                "error_description": "Authorization temporarily unavailable, try again",
+            },
+            state,
+        )
 
     if not stored:
         # Capacity protects against DoS via excessive authorize requests
@@ -726,19 +960,14 @@ async def authorize_endpoint(request: Request) -> Response:
             "Authorization code store at capacity (%d), rejecting new request",
             AUTHORIZATION_CODE_MAX_ENTRIES,
         )
-        error_params = {
-            "error": "server_error",
-            "error_description": "Server is busy, please try again later",
-        }
-        if state:
-            error_params["state"] = state
-        return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
+        return authorization_redirect(
+            request,
+            redirect_uri,
+            {
+                "error": "server_error",
+                "error_description": "Server is busy, please try again later",
+            },
+            state,
+        )
 
-    # Build redirect URL with authorization code
-    redirect_params = {"code": auth_code}
-    if state:
-        redirect_params["state"] = state
-
-    redirect_url = f"{redirect_uri}?{urlencode(redirect_params)}"
-
-    return RedirectResponse(redirect_url)
+    return authorization_redirect(request, redirect_uri, {"code": auth_code}, state)

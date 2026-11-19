@@ -17,7 +17,11 @@ from starlette.applications import Starlette
 
 # Import FastMCP-compatible auth provider
 from . import __version__, auth_code_store
-from .fastmcp_auth import DeapiAuthProvider
+from .fastmcp_auth import (
+    ApiKeyHeaderMiddleware,
+    DeapiAuthProvider,
+    InvalidTokenDescriptionMiddleware,
+)
 
 # Import tool functions
 from .tools.audio import (
@@ -261,7 +265,7 @@ def create_app(
 
     # Add health check endpoint for Docker/monitoring
     from starlette.requests import Request
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, Response
     from starlette.routing import Route
 
     from .oauth_endpoints import (
@@ -277,6 +281,19 @@ def create_app(
 
     # Add the health route to the app
     starlette_app.routes.append(Route("/health", health_check))
+
+    # Setup instructions at "/". The registry is fixed once the app is built, so the
+    # tool list is read on the first visit and kept.
+    from .landing import landing_response, public_base_url
+
+    landing_tools: list[Any] = []
+
+    async def landing_page(request: Request) -> Response:
+        if not landing_tools:
+            landing_tools.extend(await server.list_tools(run_middleware=False))
+        return landing_response(public_base_url(request), landing_tools)
+
+    starlette_app.routes.append(Route("/", landing_page, methods=["GET"]))
 
     if metrics is not None:
         metrics.wrap_app(starlette_app, server)
@@ -301,7 +318,23 @@ def create_app(
         if metrics is not None
         else token_endpoint
     )
-    starlette_app.routes.append(Route("/authorize", authorize_handler, methods=["GET"]))
+    starlette_app.routes.append(Route("/authorize", authorize_handler, methods=["GET", "POST"]))
+    # Dynamic client registration (RFC 7591) for public clients; a 404 when switched off
+    if (
+        deapi_settings.oauth_public_clients
+        and host not in LOOPBACK_HOSTS
+        and not deapi_settings.client_ip_header
+    ):
+        logger.warning(
+            "DEAPI_CLIENT_IP_HEADER is not set: the sign-in screen counts wrong keys by the "
+            "connection address, which behind a proxy is the proxy's (one shared limit) or "
+            "whatever X-Forwarded-For says. Set it to a header your edge sets, e.g. "
+            "CF-Connecting-IP behind Cloudflare."
+        )
+    if deapi_settings.oauth_public_clients:
+        from .oauth_clients import register_endpoint
+
+        starlette_app.routes.append(Route("/register", register_endpoint, methods=["POST"]))
     starlette_app.routes.append(Route("/token", token_handler, methods=["POST"]))
 
     if job_registry is not None:
@@ -319,9 +352,16 @@ def create_app(
     else:
         logger.info("Completion webhooks: off -- jobs are polled to completion")
 
+    # Added last, so it is the outermost layer: authentication and any overlay
+    # middleware (a missing-token counter) see the key as a Bearer token.
+    starlette_app.add_middleware(InvalidTokenDescriptionMiddleware)
+    starlette_app.add_middleware(ApiKeyHeaderMiddleware)
+
     logger.info(f"MCP endpoint: http://{host}:{port}/mcp")
     logger.info(f"OAuth server: http://{host}:{port}/.well-known/oauth-authorization-server")
-    logger.info("Authentication: OAuth 2.0 (Authorization Code + PKCE) and Bearer tokens")
+    logger.info(
+        "Authentication: OAuth 2.0 (Authorization Code + PKCE), Bearer tokens and X-API-Key"
+    )
 
     return starlette_app
 
