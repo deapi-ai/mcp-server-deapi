@@ -24,6 +24,32 @@ releases are git tags `vX.Y.Z`.
 - `DEAPI_VERIFY_API_KEYS` (default `true`) turns the check off.
 - Authentication failures report the new reason `invalid_key` to the auth-rejected sink
   (`observability.set_auth_rejected_sink`).
+- The key is also accepted in an `X-API-Key` header, for clients that let a user set one named
+  header. It goes through the same checks as `Authorization: Bearer`, which wins when a request
+  carries both. A key in the URL is still never read.
+- `GET /` serves a setup page: the endpoint, where to get a key, a section per client (Claude,
+  Claude Code, Cursor, VS Code, Codex CLI, Gemini CLI, any other client), a way to check the
+  connection and the tool list, generated from the server's own registry. One static document
+  with no script and no external resource, under a strict Content-Security-Policy.
+
+### Changed
+- OAuth stays a pre-registered client (`client_id=deapi-mcp`, the API key as `client_secret`),
+  now tightened where it fell short of the spec:
+  - `POST /token` accepts `client_secret_basic`, which the metadata already advertised but the
+    endpoint ignored. A failed Basic authentication gets the `WWW-Authenticate: Basic` challenge.
+  - Every `/token` answer carries `Cache-Control: no-store` (RFC 6749 §5.1).
+  - A refresh whose key deAPI now refuses (revoked or rotated) gets `invalid_grant`, so the
+    client signs in again instead of minting access tokens no tool call can use. An API outage
+    still lets the refresh through.
+  - `/authorize` accepts Cursor's documented callback `cursor://anysphere.cursor-mcp/oauth/callback`
+    as an exact string (RFC 8252 private-use scheme); any other non-http(s) callback is refused
+    as before.
+  - `/authorize` checks that `code_challenge` is a well-formed S256 value (43 base64url
+    characters), not only that one is present.
+  - `service_documentation` in the authorization server metadata points to the MCP server docs.
+
+  Nothing is removed: tokens issued by 0.6.x stay valid, and the metadata advertises neither
+  dynamic client registration nor client ID metadata documents.
 
 ## 0.6.3
 

@@ -37,7 +37,7 @@ The primary server is `deapi_mcp/server_remote.py` — an HTTP/SSE-based MCP ser
 
 ### Authentication Flow
 
-1. `DeapiAuthProvider` in `deapi_mcp/fastmcp_auth.py` handles OAuth 2.0 (Authorization Code + PKCE)
+1. `DeapiAuthProvider` in `deapi_mcp/fastmcp_auth.py` handles OAuth 2.0 (Authorization Code + PKCE); `ApiKeyHeaderMiddleware` (outermost layer) turns `X-API-Key` into `Authorization: Bearer` when the latter is absent
 2. Authenticated token is stored in `current_deapi_token` ContextVar (`deapi_mcp/auth.py`)
 3. A plain key (not a JWT) is checked once against the API by `key_verifier.py`; a key the API refuses gets 401 at connect, and `/token` answers `invalid_client` for it
 4. Tools call `get_client()` from `deapi_mcp/deapi_client.py` which reads the token from the ContextVar
@@ -51,6 +51,7 @@ The primary server is `deapi_mcp/server_remote.py` — an HTTP/SSE-based MCP ser
 - **`deapi_mcp/config.py`** - Configuration via environment variables (prefix: `DEAPI_`)
 - **`deapi_mcp/middleware.py`** - Model cache middleware that enriches tool descriptions with available models
 - **`deapi_mcp/key_verifier.py`** - Checks a plain API key (Bearer or OAuth `client_secret`) with one free `GET account/balance`; verdict cached under an HMAC of the key (valid 10 min, invalid 60 s, unknown 15 s), one probe per key at a time. Only a 401 rejects; 5xx, 429 and timeouts let the key through. Off with `DEAPI_VERIFY_API_KEYS=false`
+- **`deapi_mcp/landing.py`** - The setup page at `GET /`: static HTML, inline CSS allowed by its hash in the CSP, no script; endpoint from `PUBLIC_BASE_URL`, tool list from the registry (`list_tools(run_middleware=False)`). Keep client snippets in step with the clients' docs
 - **`deapi_mcp/auth_code_store.py`** - Single-use OAuth authorization codes: Redis when `DEAPI_REDIS_HOST` is set (any replica can redeem a code), in-memory otherwise (single replica only)
 - **`deapi_mcp/observability.py`** - Per-call outcome (`CallOutcome` on a ContextVar, `note_*` recorders, `classify`) and injectable no-op sinks; the core has no metrics dependency. `classify` labels a failed call from its most recent note; work whose failure the call survives runs inside `errors_tolerated()` (or calls `forget_api_error()` before a retry) so it never labels the call
 - **`deapi_mcp/server_remote.py`** - `register_core_tools(server)`, `create_app(server, *, metrics=None)` and `build_app()`; a deployment can import the core and inject a metrics overlay

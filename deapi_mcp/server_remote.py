@@ -17,7 +17,7 @@ from starlette.applications import Starlette
 
 # Import FastMCP-compatible auth provider
 from . import __version__, auth_code_store
-from .fastmcp_auth import DeapiAuthProvider
+from .fastmcp_auth import ApiKeyHeaderMiddleware, DeapiAuthProvider
 
 # Import tool functions
 from .tools.audio import (
@@ -261,7 +261,7 @@ def create_app(
 
     # Add health check endpoint for Docker/monitoring
     from starlette.requests import Request
-    from starlette.responses import JSONResponse
+    from starlette.responses import JSONResponse, Response
     from starlette.routing import Route
 
     from .oauth_endpoints import (
@@ -277,6 +277,19 @@ def create_app(
 
     # Add the health route to the app
     starlette_app.routes.append(Route("/health", health_check))
+
+    # Setup instructions at "/". The registry is fixed once the app is built, so the
+    # tool list is read on the first visit and kept.
+    from .landing import landing_response, public_base_url
+
+    landing_tools: list[Any] = []
+
+    async def landing_page(request: Request) -> Response:
+        if not landing_tools:
+            landing_tools.extend(await server.list_tools(run_middleware=False))
+        return landing_response(public_base_url(request), landing_tools)
+
+    starlette_app.routes.append(Route("/", landing_page, methods=["GET"]))
 
     if metrics is not None:
         metrics.wrap_app(starlette_app, server)
@@ -319,9 +332,15 @@ def create_app(
     else:
         logger.info("Completion webhooks: off -- jobs are polled to completion")
 
+    # Added last, so it is the outermost layer: authentication and any overlay
+    # middleware (a missing-token counter) see the key as a Bearer token.
+    starlette_app.add_middleware(ApiKeyHeaderMiddleware)
+
     logger.info(f"MCP endpoint: http://{host}:{port}/mcp")
     logger.info(f"OAuth server: http://{host}:{port}/.well-known/oauth-authorization-server")
-    logger.info("Authentication: OAuth 2.0 (Authorization Code + PKCE) and Bearer tokens")
+    logger.info(
+        "Authentication: OAuth 2.0 (Authorization Code + PKCE), Bearer tokens and X-API-Key"
+    )
 
     return starlette_app
 

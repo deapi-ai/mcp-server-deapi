@@ -203,6 +203,17 @@ Edit your Claude Desktop config file:
 
 Replace `YOUR_DEAPI_TOKEN` with your actual deAPI token. Save the file and restart Claude Desktop.
 
+#### Other clients
+
+Open the server's root URL (`https://your-server-domain/`) in a browser: it shows the endpoint
+and a ready-to-copy setup for Claude, Claude Code, Cursor, VS Code, Codex CLI and Gemini CLI.
+Any client that speaks Streamable HTTP works with the endpoint `/mcp` and one of these headers:
+
+- `Authorization: Bearer <your deAPI API key>`
+- `X-API-Key: <your deAPI API key>`
+
+A key deAPI does not accept is refused with `401` when the client connects.
+
 ### Using the Tools
 
 **Authentication is handled at the connection level**, not per-tool-call. Tools do NOT accept a `deapi_api_token` parameter.
@@ -450,7 +461,7 @@ The package ships type information (`py.typed`) and exposes `deapi_mcp.__version
 
 **Important**: The MCP server does NOT store API tokens. Authentication works as follows:
 
-1. **For Remote HTTP Server**: Authentication is handled via OAuth 2.0 (Authorization Code with PKCE) or HTTP headers (Authorization: Bearer token)
+1. **For Remote HTTP Server**: Authentication is handled via OAuth 2.0 (Authorization Code with PKCE) or HTTP headers (`Authorization: Bearer <key>` or `X-API-Key: <key>`); the key is never read from the URL
 2. **Token forwarding**: The server forwards authentication to the deAPI API for each request
 3. **No persistence**: Tokens are used only for the specific request and never persisted or logged
 4. **Per-connection auth**: Tools do NOT accept `deapi_api_token` parameters - authentication is managed at the connection level

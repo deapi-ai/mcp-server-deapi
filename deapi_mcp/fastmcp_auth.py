@@ -18,6 +18,33 @@ from .oauth_endpoints import (
     oauth_protected_resource_metadata,
 )
 
+API_KEY_HEADER = b"x-api-key"
+
+
+class ApiKeyHeaderMiddleware:
+    """Accept the deAPI key in ``X-API-Key`` as well as ``Authorization: Bearer``.
+
+    Some clients only let a user set one named header for a key. When a request
+    carries ``X-API-Key`` and no ``Authorization``, this rewrites it to
+    ``Authorization: Bearer <key>`` before authentication runs, so the key goes
+    through exactly the same checks (``DeapiAuthProvider.verify_token``). A request
+    that carries both keeps its ``Authorization`` header untouched.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            headers = scope.get("headers") or []
+            if not any(name == b"authorization" for name, _ in headers):
+                key = next((value for name, value in headers if name == API_KEY_HEADER), b"")
+                key = key.strip()
+                if key:
+                    scope = dict(scope)
+                    scope["headers"] = [*headers, (b"authorization", b"Bearer " + key)]
+        await self.app(scope, receive, send)
+
 
 class DeapiAuthProvider(AuthProvider):
     """FastMCP AuthProvider for deAPI token passthrough.

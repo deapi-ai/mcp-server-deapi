@@ -227,8 +227,10 @@ The OAuth implementation is fully backward compatible. You can use:
    - Server issues JWT tokens
 
 2. **Direct Bearer token** (backward compatible):
-   - Use `Authorization: Bearer YOUR_DEAPI_TOKEN` header directly
+   - Use `Authorization: Bearer YOUR_DEAPI_TOKEN` header directly, or `X-API-Key: YOUR_DEAPI_TOKEN`
+     for a client that only lets you name one header (`Authorization` wins when both are sent)
    - No OAuth flow needed
+   - Never put the key in the URL: the server reads it only from these headers
    - The key is checked once against deAPI (see [API key check](#api-key-check)); a key deAPI
      refuses gets `401` at `initialize`
 
@@ -263,8 +265,12 @@ the server:
   `WWW-Authenticate: Bearer error="invalid_token"`, so the client asks for a new key at once
   instead of every tool call failing later with an API error;
 - `client_secret` on `POST /token` (`authorization_code` and `client_credentials` grants): a
-  refused key gets `401 invalid_client`. An access token issued afterwards is trusted by its
-  signature and is not checked again.
+  refused key gets `401 invalid_client`;
+- `grant_type=refresh_token`: the key the grant was issued for is checked again, and a key deAPI
+  now refuses (revoked or rotated) gets `400 invalid_grant`, so the client signs in again.
+
+An access token is trusted by its signature between refreshes, so a revoked key stops working
+at the latest when its access token expires (1 hour).
 
 The verdict is cached per key, under an HMAC of the key with a per-process random secret (the
 key itself is never stored or logged): an accepted key for 10 minutes, a refused one for 60
@@ -290,9 +296,23 @@ cached for 15 seconds. Set `DEAPI_VERIFY_API_KEYS=false` to turn the check off.
 
 ### Client ID Validation
 
-- Only `client_id=deapi-mcp` is accepted
-- This prevents unauthorized OAuth clients
+- Only `client_id=deapi-mcp` is accepted: a pre-registered client, with the API key as its secret
+- The metadata advertises neither dynamic client registration (`registration_endpoint`) nor
+  client ID metadata documents, so a client that can only register itself fails at discovery
+  instead of after the browser opens
+- `/token` takes the client credentials in the form (`client_secret_post`) or in an
+  `Authorization: Basic` header (`client_secret_basic`); token responses are never cached
+  (`Cache-Control: no-store`)
 - Can be customized in `deapi_mcp/oauth_endpoints.py`
+
+### Redirect URIs and PKCE
+
+- `redirect_uri` must use `http` or `https`, except Cursor's documented callback
+  `cursor://anysphere.cursor-mcp/oauth/callback`, accepted as that exact string. `javascript:`,
+  `data:` and every other scheme are refused without a redirect
+- `/token` requires the same `redirect_uri` as `/authorize`, character for character
+- PKCE is mandatory and S256 only: `code_challenge_method=S256` and a 43-character base64url
+  `code_challenge`; `plain` is refused
 
 ## Troubleshooting
 

@@ -64,7 +64,9 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         failures += 1
 
 
-def mcp(body: dict[str, Any], token: str | None = None) -> httpx.Response:
+def mcp(
+    body: dict[str, Any], token: str | None = None, api_key: str | None = None
+) -> httpx.Response:
     headers = {
         "Accept": "application/json, text/event-stream",
         "Content-Type": "application/json",
@@ -72,6 +74,8 @@ def mcp(body: dict[str, Any], token: str | None = None) -> httpx.Response:
     }
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
+    if api_key is not None:
+        headers["X-API-Key"] = api_key
     return http.post(f"{MCP_URL}/mcp", headers=headers, json=body)
 
 
@@ -148,6 +152,15 @@ def main() -> int:
     payload = tool_payload(r) if r.status_code == 200 else {}
     check("good key: get_balance success", payload.get("success") is True, str(payload)[:200])
 
+    # The same key in X-API-Key
+    r = mcp(INITIALIZE, api_key=GOOD_KEY)
+    check("X-API-Key good: initialize -> 200", r.status_code == 200, str(r.status_code))
+    r = mcp(GET_BALANCE, api_key=GOOD_KEY)
+    payload = tool_payload(r) if r.status_code == 200 else {}
+    check("X-API-Key good: get_balance success", payload.get("success") is True)
+    r = mcp(INITIALIZE, api_key=BAD_KEY)
+    check("X-API-Key bad: initialize -> 401", r.status_code == 401, str(r.status_code))
+
     # OAuth: Authorization Code + PKCE, then refresh
     r = oauth_tokens(GOOD_KEY)
     check("oauth: good key -> tokens", r.status_code == 200, str(r.status_code))
@@ -171,6 +184,14 @@ def main() -> int:
             r = mcp(TOOLS_LIST, token=r.json()["access_token"])
             check("oauth: refreshed JWT tools/list -> 200", r.status_code == 200)
 
+    r = http.post(
+        f"{MCP_URL}/token",
+        data={"grant_type": "client_credentials"},
+        auth=("deapi-mcp", GOOD_KEY),
+    )
+    check("client_secret_basic: good key -> 200", r.status_code == 200, str(r.status_code))
+    check("token response: no-store", r.headers.get("cache-control") == "no-store")
+
     r = oauth_tokens(BAD_KEY)
     check(
         "oauth: bad key -> 401 invalid_client",
@@ -191,9 +212,21 @@ def main() -> int:
         f"{r.status_code}",
     )
 
+    # Setup page
+    r = http.get(f"{MCP_URL}/")
+    check(
+        "GET / -> setup page",
+        r.status_code == 200 and f"{MCP_URL}/mcp" in r.text,
+        str(r.status_code),
+    )
+    check(
+        "GET / -> strict CSP",
+        "default-src 'none'" in r.headers.get("content-security-policy", ""),
+    )
+
     if MOCK_URL:
         calls = http.get(f"{MOCK_URL}/_control/calls").json()
-        # Bad key: initialize, tools/list, /token twice -> one probe, the rest from the cache.
+        # Bad key: Bearer and X-API-Key, /token twice -> one probe, the rest from the cache.
         check("bad key probed once", calls.get("other") == 1, str(calls))
 
         # Outage: a never-seen key is let through, as before the check existed.

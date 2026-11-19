@@ -19,14 +19,16 @@ Flow (Authorization Code):
 """
 
 import base64
+import binascii
 import hashlib
 import logging
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 
 import jwt
 from cryptography.fernet import Fernet
@@ -52,6 +54,14 @@ CODE_STORE_RETRY_AFTER_SECONDS = 5
 
 # Allowed redirect URI schemes (prevent javascript:, data:, etc.)
 ALLOWED_REDIRECT_SCHEMES = {"http", "https"}
+# Native-app callbacks on a private-use scheme (RFC 8252 §7.1), accepted only as these
+# exact strings. Cursor's documented callback for a pre-registered OAuth client.
+ALLOWED_NATIVE_REDIRECT_URIS = frozenset({"cursor://anysphere.cursor-mcp/oauth/callback"})
+# An S256 code_challenge is the unpadded base64url of a SHA-256 digest: 43 characters.
+S256_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{43}")
+# RFC 6749 §5.1: token responses must not be cached.
+NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
+DOCS_URL = "https://docs.deapi.ai/execution-modes-and-integrations/mcp-server"
 
 # JWT signing key - derive from environment or generate
 # In production, set DEAPI_JWT_SECRET_KEY environment variable
@@ -136,6 +146,8 @@ def _validate_redirect_uri(redirect_uri: str) -> bool:
     """Validate that a redirect URI uses an allowed scheme.
 
     Prevents open redirect attacks via javascript:, data:, or other dangerous schemes.
+    A private-use scheme is accepted only for the exact native-app callbacks listed in
+    ALLOWED_NATIVE_REDIRECT_URIS.
 
     Args:
         redirect_uri: The redirect URI to validate
@@ -143,6 +155,8 @@ def _validate_redirect_uri(redirect_uri: str) -> bool:
     Returns:
         True if the URI uses an allowed scheme
     """
+    if redirect_uri in ALLOWED_NATIVE_REDIRECT_URIS:
+        return True
     try:
         parsed = urlparse(redirect_uri)
         return parsed.scheme.lower() in ALLOWED_REDIRECT_SCHEMES and bool(parsed.netloc)
@@ -302,7 +316,7 @@ async def oauth_authorization_server_metadata(request: Request) -> JSONResponse:
         "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": [],  # No scopes for our use case
-        "service_documentation": "https://api.deapi.ai",
+        "service_documentation": DOCS_URL,
     }
 
     return JSONResponse(metadata)
@@ -351,7 +365,45 @@ def _form_str(form: FormData, key: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+def _basic_credentials(request: Request) -> Optional[tuple[str, str]]:
+    """The client_id and client_secret from an ``Authorization: Basic`` header.
+
+    RFC 6749 §2.3.1 (``client_secret_basic``): base64 of ``id:secret``, each part
+    form-urlencoded first. Returns None when there is no Basic header; raises
+    ValueError when there is one that cannot be decoded.
+    """
+    header = request.headers.get("authorization", "")
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "basic":
+        return None
+    try:
+        decoded = base64.b64decode(value.strip(), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise ValueError("malformed Basic credentials") from exc
+    client_id, sep, client_secret = decoded.partition(":")
+    if not sep:
+        raise ValueError("malformed Basic credentials")
+    # unquote, not unquote_plus: a client that skips the encoding step must not have a
+    # literal '+' in the key turned into a space.
+    return unquote(client_id), unquote(client_secret)
+
+
 async def token_endpoint(request: Request) -> JSONResponse:
+    """OAuth 2.0 token endpoint: the grant handling below, plus the headers every answer needs.
+
+    Token responses are never cached (RFC 6749 §5.1), and a client that authenticated with
+    HTTP Basic and failed gets the Basic challenge back (RFC 6749 §5.2).
+    """
+    response = await _token_response(request)
+    response.headers.update(NO_STORE_HEADERS)
+    if response.status_code == 401 and request.headers.get("authorization", "").lower().startswith(
+        "basic "
+    ):
+        response.headers["WWW-Authenticate"] = f'Basic realm="{DEFAULT_CLIENT_ID}"'
+    return response
+
+
+async def _token_response(request: Request) -> JSONResponse:
     """OAuth 2.0 Token endpoint for Authorization Code, Client Credentials, and Refresh Token grants.
 
     Mounted at: /token
@@ -372,6 +424,10 @@ async def token_endpoint(request: Request) -> JSONResponse:
        - refresh_token: refresh token from previous token response
        - client_id: "deapi-mcp"
 
+    The client authenticates with client_id and client_secret in the form
+    (``client_secret_post``) or in an ``Authorization: Basic`` header
+    (``client_secret_basic``); the header wins when both are sent.
+
     Returns JWT containing the Deapi token, plus a refresh token for non-refresh grants.
 
     Args:
@@ -385,6 +441,23 @@ async def token_endpoint(request: Request) -> JSONResponse:
     grant_type = _form_str(form_data, "grant_type")
     client_id = _form_str(form_data, "client_id")
     client_secret = _form_str(form_data, "client_secret")
+    try:
+        basic = _basic_credentials(request)
+    except ValueError:
+        return JSONResponse(
+            {"error": "invalid_client", "error_description": "Malformed Basic credentials"},
+            status_code=401,
+        )
+    if basic is not None:
+        if client_id and client_id != basic[0]:
+            return JSONResponse(
+                {
+                    "error": "invalid_request",
+                    "error_description": "client_id in the form and in Basic credentials differ",
+                },
+                status_code=400,
+            )
+        client_id, client_secret = basic
 
     # Validate grant_type
     if grant_type not in ["authorization_code", "client_credentials", "refresh_token"]:
@@ -440,6 +513,20 @@ async def token_endpoint(request: Request) -> JSONResponse:
             logger.error("Failed to decrypt deapi token from refresh token")
             return JSONResponse(
                 {"error": "invalid_grant", "error_description": "Invalid refresh token"},
+                status_code=400,
+            )
+
+        # The grant carries the key it was issued for. A key deAPI now refuses (revoked
+        # or rotated) ends the grant, so the client signs in again with a working key
+        # instead of minting access tokens no tool call can use.
+        if await is_api_key_rejected(deapi_token):
+            logger.warning("Refresh with an API key deAPI rejects")
+            return JSONResponse(
+                {
+                    "error": "invalid_grant",
+                    "error_description": "The API key of this grant was rejected by deAPI; "
+                    "authorize again",
+                },
                 status_code=400,
             )
 
@@ -691,8 +778,12 @@ async def authorize_endpoint(request: Request) -> Response:
             error_params["state"] = state
         return RedirectResponse(f"{redirect_uri}?{urlencode(error_params)}")
 
-    # Validate PKCE challenge
-    if not code_challenge or code_challenge_method != "S256":
+    # Validate PKCE challenge: S256 only (no "plain"), and a well-formed S256 value
+    if (
+        not code_challenge
+        or code_challenge_method != "S256"
+        or not S256_CHALLENGE.fullmatch(code_challenge)
+    ):
         logger.error(f"Invalid PKCE: challenge={code_challenge}, method={code_challenge_method}")
         error_params = {
             "error": "invalid_request",
