@@ -296,6 +296,8 @@ DEAPI_API_VERSION=v2
 
 # HTTP Client
 DEAPI_HTTP_TIMEOUT=30.0
+# Media one tool call uploads, in MB (all its files; deAPI's own request cap is 75 MB)
+DEAPI_MAX_UPLOAD_MB=75
 DEAPI_MAX_RETRIES=3
 
 # Seconds one tool call waits before returning done=false and the job_id

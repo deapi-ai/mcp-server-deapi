@@ -149,7 +149,10 @@ class PollingManager:
             # Once the job is over nobody will listen for it again. A job still
             # running stays tracked, so a later check_job_status(wait_seconds)
             # wakes on its callback too; the registry's TTL sweep bounds it.
-            if result is None or not result.in_progress:
+            # Only a status read that saw the job end forgets it: a 404 or an error
+            # (another account asking about this id, say) says nothing about the job,
+            # and must not take the callback away from the caller who is waiting on it.
+            if result is not None and result.status is not None and not result.in_progress:
                 get_job_registry().forget(job_id)
 
     async def _poll_until_complete(

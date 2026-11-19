@@ -13,7 +13,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import redis.asyncio as aioredis
 from redis.asyncio.retry import Retry
@@ -193,15 +193,27 @@ def build_redis_client(
     return aioredis.Redis(**kwargs)
 
 
-_store: AuthCodeStore | None = None
+# Two pools, each with its own cap. Anyone can fill the default pool (the pre-registered
+# client gets a code on a bare GET /authorize); a sign-in code needs a key deAPI accepted.
+# Kept apart, a flood of the first never evicts a code a user just signed in for.
+CodePool = Literal["default", "sign_in"]
 
-AUTHORIZATION_CODE_MAX_ENTRIES = 1000
+AUTHORIZATION_CODE_MAX_ENTRIES = 10000
+SIGN_IN_CODE_MAX_ENTRIES = 10000
+
+_stores: dict[str, AuthCodeStore] = {}
+_redis: aioredis.Redis | None = None
 
 
-def get_auth_code_store() -> AuthCodeStore:
-    global _store
-    if _store is None:
-        if settings.redis_host:
+def get_auth_code_store(pool: CodePool = "default") -> AuthCodeStore:
+    global _redis
+    store = _stores.get(pool)
+    if store is not None:
+        return store
+    cap = SIGN_IN_CODE_MAX_ENTRIES if pool == "sign_in" else AUTHORIZATION_CODE_MAX_ENTRIES
+    prefix = settings.redis_prefix + ("signin_" if pool == "sign_in" else "")
+    if settings.redis_host:
+        if _redis is None:
             logger.info(
                 "OAuth code store: Redis %s:%s db=%s prefix=%s",
                 settings.redis_host,
@@ -209,18 +221,27 @@ def get_auth_code_store() -> AuthCodeStore:
                 settings.redis_db,
                 settings.redis_prefix,
             )
-            _store = RedisAuthCodeStore(
-                build_redis_client(settings), settings.redis_prefix, AUTHORIZATION_CODE_MAX_ENTRIES
-            )
-        else:
+            _redis = build_redis_client(settings)
+        store = RedisAuthCodeStore(_redis, prefix, cap)
+    else:
+        if not _stores:
             logger.warning(
                 "OAuth code store: in-memory (DEAPI_REDIS_HOST unset). Authorization codes are "
                 "per-process, so this is only safe for a single-replica deployment"
             )
-            _store = InMemoryAuthCodeStore(AUTHORIZATION_CODE_MAX_ENTRIES)
-    return _store
+        store = InMemoryAuthCodeStore(cap)
+    _stores[pool] = store
+    return store
 
 
-def reset_auth_code_store(store: AuthCodeStore | None = None) -> None:
-    global _store
-    _store = store
+def reset_auth_code_store(
+    store: AuthCodeStore | None = None, sign_in: AuthCodeStore | None = None
+) -> None:
+    """Replace the stores (tests); None means build the default again on next use."""
+    global _redis
+    _stores.clear()
+    _redis = None
+    if store is not None:
+        _stores["default"] = store
+    if sign_in is not None:
+        _stores["sign_in"] = sign_in

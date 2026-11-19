@@ -153,6 +153,10 @@ def env_int(name: str, default: int) -> int:
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
+MIN_JWT_SECRET_LENGTH = 32
+PLACEHOLDER_SECRETS = {"your-secret-key-here", "changeme", "secret"}
+
+
 def require_jwt_secret_key(host: str) -> None:
     """Exit non-zero when replicas could each sign with a different ephemeral JWT key.
 
@@ -162,7 +166,16 @@ def require_jwt_secret_key(host: str) -> None:
     """
     from .config import settings as deapi_settings
 
-    if os.getenv("DEAPI_JWT_SECRET_KEY"):
+    secret = os.getenv("DEAPI_JWT_SECRET_KEY")
+    if secret:
+        # The key signs every token and encrypts the API key inside it: a short or
+        # example one can be guessed offline from any token the server issued
+        if len(secret) < MIN_JWT_SECRET_LENGTH or secret in PLACEHOLDER_SECRETS:
+            logging.getLogger(__name__).warning(
+                "DEAPI_JWT_SECRET_KEY is weak (shorter than %d characters, or the example "
+                "value). Use a long random one, e.g. secrets.token_urlsafe(32).",
+                MIN_JWT_SECRET_LENGTH,
+            )
         return
     if host in LOOPBACK_HOSTS and not deapi_settings.redis_host:
         return

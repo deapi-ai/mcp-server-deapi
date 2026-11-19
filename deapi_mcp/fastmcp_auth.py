@@ -6,7 +6,8 @@ JWT/Bearer token authentication into the MCP server.
 
 import json
 import re
-from typing import Any
+from contextvars import ContextVar
+from typing import Any, Optional
 
 from fastmcp.server.auth import AccessToken, AuthProvider
 from starlette.routing import Route
@@ -21,6 +22,13 @@ from .oauth_endpoints import (
 )
 
 API_KEY_HEADER = b"x-api-key"
+MCP_PATH_PREFIX = "/mcp"
+
+# Whether the current request is for the MCP endpoint, set by ApiKeyHeaderMiddleware.
+# Authentication runs on every route, but only /mcp takes a deAPI key: a bearer token sent
+# elsewhere (a metrics scraper's, say) is never checked with deAPI. None: not set (no
+# middleware in front), so every token is checked as before.
+_mcp_request: ContextVar[Optional[bool]] = ContextVar("deapi_mcp_request", default=None)
 
 
 class ApiKeyHeaderMiddleware:
@@ -31,13 +39,20 @@ class ApiKeyHeaderMiddleware:
     ``Authorization: Bearer <key>`` before authentication runs, so the key goes
     through exactly the same checks (``DeapiAuthProvider.verify_token``). A request
     that carries both keeps its ``Authorization`` header untouched.
+
+    It also notes whether the request is for /mcp at all, so a token sent to any
+    other route is never taken for a deAPI key.
     """
 
     def __init__(self, app: Any) -> None:
         self.app = app
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        if scope["type"] == "http" and scope.get("path", "").startswith("/mcp"):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        on_mcp = scope.get("path", "").startswith(MCP_PATH_PREFIX)
+        if on_mcp:
             headers = scope.get("headers") or []
             if not any(name == b"authorization" for name, _ in headers):
                 key = next((value for name, value in headers if name == API_KEY_HEADER), b"")
@@ -45,7 +60,11 @@ class ApiKeyHeaderMiddleware:
                 if key:
                     scope = dict(scope)
                     scope["headers"] = [*headers, (b"authorization", b"Bearer " + key)]
-        await self.app(scope, receive, send)
+        marker = _mcp_request.set(on_mcp)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            _mcp_request.reset(marker)
 
 
 # Shown to the user by clients that surface error_description. No double quotes: it sits
@@ -163,6 +182,11 @@ class DeapiAuthProvider(AuthProvider):
             logger.error("No Authorization token provided")
             return None
 
+        if _mcp_request.get() is False:
+            # Not the MCP endpoint: no route here takes a deAPI key, so the token is left
+            # alone (not sent to deAPI, not counted as a rejection)
+            return None
+
         try:
             deapi_token = token  # Default: use token directly
 
@@ -213,7 +237,8 @@ class DeapiAuthProvider(AuthProvider):
             )
 
         except Exception as e:
-            logger.error(f"Token verification failed: {str(e)}")
+            # The type only: a message could quote part of the token
+            logger.error("Token verification failed: %s", type(e).__name__)
             record_auth_rejected("error")
             return None
 

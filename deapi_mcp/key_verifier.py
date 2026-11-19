@@ -18,7 +18,10 @@ per-process random secret, so the raw key is never held as a cache key:
   of the server; the verdict is cached for ``UNKNOWN_TTL`` so an outage does not
   add a probe to every request.
 
-Concurrent requests carrying the same key share one probe. Turn the whole check
+Concurrent requests carrying the same key share one probe. A key that is not
+printable ASCII cannot be sent in a header at all and is invalid without a probe.
+The sign-in screen has probe slots of its own, so a flood of keys on /token or /mcp
+never leaves a person signing in with "could not be checked". Turn the whole check
 off with ``DEAPI_VERIFY_API_KEYS=false``.
 """
 
@@ -27,6 +30,7 @@ import enum
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 import time
 from collections import OrderedDict
@@ -55,6 +59,11 @@ MAX_ENTRIES = 10_000
 # (the API then refuses each tool call), as before this check existed, instead of
 # turning the server into an amplifier of requests to the API.
 MAX_CONCURRENT_PROBES = 32
+# Extra probes only the sign-in screen may use, on top of MAX_CONCURRENT_PROBES. It has a
+# per-IP wrong-key limit of its own, so these cannot be flooded the same way.
+RESERVED_SIGN_IN_PROBES = 8
+# What a key can be: it travels in an HTTP header, so printable ASCII without spaces.
+_KEY_SHAPE = re.compile(r"[!-~]+")
 
 # Monotonic clock for verdict expiry; a seam the tests replace.
 _clock = time.monotonic
@@ -130,8 +139,13 @@ class KeyVerifier:
         """True when a recent verdict says deAPI refuses ``api_key``. Never probes."""
         return self._cached(self._cache_key(api_key)) is KeyStatus.INVALID
 
-    async def verify(self, api_key: str) -> KeyStatus:
-        """The key's status, from the cache or from one probe shared by every caller."""
+    async def verify(self, api_key: str, *, sign_in: bool = False) -> KeyStatus:
+        """The key's status, from the cache or from one probe shared by every caller.
+
+        ``sign_in`` lets the call use the probe slots kept for the sign-in screen.
+        """
+        if not _KEY_SHAPE.fullmatch(api_key):
+            return KeyStatus.INVALID
         cache_key = self._cache_key(api_key)
         cached = self._cached(cache_key)
         if cached is not None:
@@ -139,7 +153,8 @@ class KeyVerifier:
 
         probe = self._inflight.get(cache_key)
         if probe is None:
-            if len(self._inflight) >= MAX_CONCURRENT_PROBES:
+            limit = MAX_CONCURRENT_PROBES + (RESERVED_SIGN_IN_PROBES if sign_in else 0)
+            if len(self._inflight) >= limit:
                 logger.warning("API key check: too many checks in flight; letting a key through")
                 return KeyStatus.UNKNOWN
             probe = asyncio.ensure_future(self._probe_and_store(cache_key, api_key))

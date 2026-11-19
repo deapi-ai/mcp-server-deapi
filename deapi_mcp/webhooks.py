@@ -48,7 +48,7 @@ from typing import Dict, Optional, Protocol
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .config import settings
+from .config import secret_value, settings
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +282,7 @@ async def webhook_receiver(request: Request) -> JSONResponse:
     API would not change that) and non-terminal events. Only a bad signature is
     refused, and that is the one case where the API retrying is harmless.
     """
-    secret = settings.webhook_secret
+    secret = secret_value(settings.webhook_secret)
     if not internal_webhooks_enabled() or not secret:
         # The route is only mounted when enabled, so this is belt and braces.
         return JSONResponse({"error": "webhook receiver not enabled"}, status_code=404)

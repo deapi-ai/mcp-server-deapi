@@ -41,7 +41,7 @@ from .auth_code_store import AUTHORIZATION_CODE_MAX_ENTRIES, AuthCodeStoreUnavai
 from .config import settings
 from .consent import error_page as consent_error_page
 from .consent import show_consent, submit_consent
-from .key_verifier import is_api_key_rejected
+from .key_verifier import is_api_key_rejected, is_key_known_invalid
 from .oauth_clients import OAuthClient, looks_like_public_client_id, resolve_client
 
 logger = logging.getLogger(__name__)
@@ -631,7 +631,10 @@ async def _token_response(request: Request) -> JSONResponse:
 
         # Fetch and burn the code in one step: a code is single-use even if a later check fails
         try:
-            auth_data = await auth_code_store.get_auth_code_store().consume(code)
+            store = auth_code_store.get_auth_code_store(
+                "sign_in" if public_client is not None else "default"
+            )
+            auth_data = await store.consume(code)
         except AuthCodeStoreUnavailable as exc:
             cause = exc.__cause__ or exc
             logger.error(
@@ -705,6 +708,12 @@ async def _token_response(request: Request) -> JSONResponse:
                     {"error": "invalid_grant", "error_description": "Invalid authorization code"},
                     status_code=400,
                 )
+            # deAPI may have refused the key since (a tool call got 401 in the meantime)
+            if is_key_known_invalid(deapi_token):
+                return JSONResponse(
+                    {"error": "invalid_grant", "error_description": "The API key was refused"},
+                    status_code=400,
+                )
             return _token_success(deapi_token, client_id)
 
         # Client secret IS the Deapi token
@@ -763,12 +772,10 @@ def _token_success(deapi_token: str, client_id: str) -> JSONResponse:
         access_token = create_jwt(deapi_token, client_id)
         refresh_token = create_refresh_token(deapi_token, client_id)
     except Exception as e:
-        logger.error(f"Failed to create tokens: {str(e)}")
+        # The type only: the message of a failure here is no business of the client's
+        logger.error("Failed to create tokens: %s", type(e).__name__)
         return JSONResponse(
-            {
-                "error": "server_error",
-                "error_description": f"Failed to create tokens: {str(e)}",
-            },
+            {"error": "server_error", "error_description": "Failed to create tokens"},
             status_code=500,
         )
     return JSONResponse(
@@ -870,7 +877,7 @@ async def authorize_endpoint(request: Request) -> Response:
 
     # From here on the redirect URI is trusted for this client, so errors go back to it
     if response_type != "code":
-        logger.error("Invalid response_type: %s", response_type)
+        logger.error("Invalid response_type: %r", (response_type or "")[:100])
         return authorization_redirect(
             request,
             redirect_uri,
@@ -887,7 +894,7 @@ async def authorize_endpoint(request: Request) -> Response:
         or code_challenge_method != "S256"
         or not S256_CHALLENGE.fullmatch(code_challenge)
     ):
-        logger.error("Invalid PKCE: method=%s", code_challenge_method)
+        logger.error("Invalid PKCE: method=%r", (code_challenge_method or "")[:100])
         return authorization_redirect(
             request,
             redirect_uri,

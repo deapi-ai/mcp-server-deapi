@@ -6,6 +6,11 @@ from pydantic import AliasChoices, BaseModel, Field, SecretStr, field_validator,
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def secret_value(value: SecretStr | str | None) -> str | None:
+    """The plain text of a secret setting (a plain string is taken as it is)."""
+    return value.get_secret_value() if isinstance(value, SecretStr) else value
+
+
 class PollingConfig(BaseModel):
     """Configuration for smart adaptive polling based on job type."""
 
@@ -85,6 +90,15 @@ class Settings(BaseSettings):
         description="Seconds one tool call waits for its job before returning the job_id to resume with",
     )
 
+    # Media a tool call uploads, in megabytes: the files of one call together, and the cap
+    # on any single file. deAPI refuses a request body over 75 MB, so more is never useful;
+    # lower it to bound the memory one call can take.
+    max_upload_mb: int = Field(
+        default=75,
+        ge=1,
+        description="Most media one tool call uploads, in MB (all its files together)",
+    )
+
     # Plain API key check (deapi_mcp/key_verifier.py). A key sent as a bearer token
     # or as the OAuth client_secret is checked once against the API (cached), so a
     # wrong key is refused with 401 at connect instead of failing every tool call.
@@ -136,9 +150,12 @@ class Settings(BaseSettings):
         default=None,
         description="Public HTTPS URL of this server's /webhooks/deapi route, as the API must reach it",
     )
-    webhook_secret: str | None = Field(
+    webhook_secret: SecretStr | None = Field(
         default=None,
-        description="Key the API signs callbacks with (HMAC-SHA256). 32-255 characters",
+        description=(
+            "Key the API signs callbacks with (HMAC-SHA256). 32-255 characters. A SecretStr "
+            "so it never reaches a repr; read it with secret_value()"
+        ),
     )
     webhook_fallback_poll_interval: float = Field(
         default=15.0,
@@ -228,9 +245,10 @@ class Settings(BaseSettings):
             raise ValueError("DEAPI_WEBHOOKS_INTERNAL is set but DEAPI_WEBHOOK_RECEIVER_URL is not")
         if not self.webhook_receiver_url.lower().startswith("https://"):
             raise ValueError("DEAPI_WEBHOOK_RECEIVER_URL must use https (the API requires it)")
-        if not self.webhook_secret:
+        secret = secret_value(self.webhook_secret)
+        if not secret:
             raise ValueError("DEAPI_WEBHOOKS_INTERNAL is set but DEAPI_WEBHOOK_SECRET is not")
-        if not 32 <= len(self.webhook_secret) <= 255:
+        if not 32 <= len(secret) <= 255:
             raise ValueError("DEAPI_WEBHOOK_SECRET must be 32-255 characters (API rule)")
         return self
 

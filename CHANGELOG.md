@@ -3,6 +3,70 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.7.1
+
+Security hardening after a review of 0.7.0. No known exploit; nothing changes for a client
+that worked before, except that media uploads now stop at deAPI's own limits.
+
+### Security
+- A client ID metadata document (or a media URL) served compressed could make the server
+  inflate far more than the size cap, since the body was decompressed a network chunk at a
+  time before the cap was checked. Fetched bodies are now read raw: `Accept-Encoding:
+  identity` is sent and a compressed answer is refused, never inflated.
+- A media fetch has an overall deadline (four times the per-read timeout), so a server that
+  trickles bytes cannot hold it open; proxy settings from the environment are ignored, so
+  the connection always goes to the address that was checked; IPv6 site-local addresses and
+  IPv4 addresses wrapped in 6to4 or Teredo are judged like the address inside.
+- Media uploads stop at deAPI's limits: an image at 10 MB, audio at 20 MB, video at 50 MB,
+  and one tool call's files together at `DEAPI_MAX_UPLOAD_MB` (new, default 75, deAPI's own
+  request cap; it also caps each file). List parameters (`images`, `ref_images`,
+  `ref_videos`, `ref_audios`) take at most 16 entries. Before, one call could make the
+  server hold several hundred megabytes.
+- The authorization codes of the sign-in screen are kept apart from those of the
+  pre-registered client, each with a cap of 10,000 (was one shared cap of 1,000). Anyone can
+  have a pre-registered code issued, so a flood of them could push out a code a person had
+  just signed in for.
+- A redirect URI's host must be a plain DNS name (ASCII, an IDN in `xn--` form) or an IP
+  literal, without user info; the same holds for a metadata document's host. A `;` in the
+  host could add a directive to the sign-in page's CSP header, and a host outside Latin-1
+  failed with a 500. Look-alike hosts in other scripts cannot appear on the sign-in screen.
+  An IPv6 zone (`%...`) is refused too. A dynamically registered `client_id` issued by 0.7.0
+  with a redirect URI these rules now refuse stops working; that client registers again.
+- Wrong-key limit on the sign-in screen: an attempt is counted before the key is checked and
+  given back when the key is good, so concurrent attempts no longer get past the limit; an
+  IPv6 address counts as its /64. The sign-in screen has key-check slots of its own, so a
+  flood of keys on `/token` or `/mcp` cannot make it answer "could not be checked".
+- Metadata documents: one fetch per `client_id` at a time (everyone signing in with that
+  client meanwhile shares it), and at most 4 at once for one site (waiting up to 2 seconds
+  for a slot), so one party's slow hosts cannot take every fetch slot.
+- Only requests to `/mcp` have their bearer token checked with deAPI. Authentication runs on
+  every route, so a token sent elsewhere (a metrics scraper's, for example) used to be sent
+  to deAPI as if it were an API key.
+- The shared HTTP client keeps no cookies. It serves every user's requests, so a cookie set
+  on one user's response would have been sent with the next user's.
+- A key that is not printable ASCII is refused without a check (it was let through with a
+  token, because the check itself failed).
+- A sign-in code is refused at `/token` when deAPI has refused its key since it was issued.
+- `check_job_status` sends the job id as one path segment (`../`, `?` and `#` are escaped).
+- A status read that fails (a 404 for another account's job id, an API error) no longer stops
+  the internal webhook from waking the call that is waiting on that job.
+- Two log lines quote the client's `response_type` and `code_challenge_method` with `repr`,
+  so they cannot forge a log line. A failure to create tokens no longer returns its error
+  message to the client, and an unexpected error while verifying a token logs only its type.
+- `DEAPI_WEBHOOK_SECRET` is a `SecretStr`: it no longer appears in a `repr` of the settings.
+  Read it with `config.secret_value()`.
+- A warning at startup when `DEAPI_JWT_SECRET_KEY` is shorter than 32 characters or an
+  example value.
+
+### Upgrade notes
+- Sign-in codes move to their own Redis keys (`<prefix>signin_oauth_code:*`). During a
+  rolling upgrade from 0.7.0, a sign-in finished on one version and redeemed on the other
+  fails with `invalid_grant`; the client signs in again. Codes live 10 minutes.
+- A media URL whose server sends the body compressed (for example an object stored with
+  `Content-Encoding: gzip`) is refused instead of inflated.
+- Redirect hosts with an underscore are refused: a CSP host source cannot name them, so the
+  sign-in form could never have redirected there anyway.
+
 ## 0.7.0
 
 ### Added

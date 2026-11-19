@@ -108,6 +108,8 @@ DEAPI_API_BASE_URL=https://api.deapi.ai
 DEAPI_API_VERSION=v2
 DEAPI_HTTP_TIMEOUT=30.0
 DEAPI_MAX_RETRIES=3
+# Media one tool call uploads, in MB (all its files; deAPI's own request cap is 75 MB)
+DEAPI_MAX_UPLOAD_MB=75
 
 # Check plain API keys against deAPI at connect (deapi_mcp/key_verifier.py)
 DEAPI_VERIFY_API_KEYS=true

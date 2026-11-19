@@ -7,7 +7,13 @@ from pydantic import Field
 from ..deapi_client import DeapiAPIError, get_client
 from ..middleware import ensure_model_cache
 from ..polling_manager import PollingManager
-from ..utils import InputError, form_bool, prepare_image_upload_async
+from ..utils import (
+    MAX_MEDIA_INPUTS,
+    InputError,
+    check_upload_budget,
+    form_bool,
+    prepare_image_upload_async,
+)
 from ._price_helpers import resolve_from_card, resolve_generation_params
 from ._responses import build_job_response, build_price_response, input_error_response
 
@@ -225,7 +231,8 @@ async def image_to_image(
     images: Annotated[
         Optional[list[Any]],
         Field(
-            description="Several source images to edit together, each a URL, data URI or base64 string. How many a model takes is 'up to N input image(s)' in the model list (the API caps it at 5). Mutually exclusive with 'image'"
+            max_length=MAX_MEDIA_INPUTS,
+            description="Several source images to edit together, each a URL, data URI or base64 string. How many a model takes is 'up to N input image(s)' in the model list (the API caps it at 5). Mutually exclusive with 'image'",
         ),
     ] = None,
     webhook_url: Annotated[
@@ -273,10 +280,12 @@ async def image_to_image(
 
             # Repeated `images[]` parts are what Laravel parses back into an array.
             if images:
-                upload_files = [
-                    ("images[]", (await prepare_image_upload_async(item, "images"))[1])
-                    for item in images
-                ]
+                upload_files = []
+                for item in images:
+                    upload_files.append(
+                        ("images[]", (await prepare_image_upload_async(item, "images"))[1])
+                    )
+                    check_upload_budget(upload_files)
             else:
                 assert image  # guarded above: one of image / images is set
                 field_name, file_tuple = await prepare_image_upload_async(image, "image")
@@ -500,7 +509,8 @@ async def image_to_image_price(
     images: Annotated[
         Optional[list[Any]],
         Field(
-            description="Several source images, as the job will send them. Mutually exclusive with 'image'"
+            max_length=MAX_MEDIA_INPUTS,
+            description="Several source images, as the job will send them. Mutually exclusive with 'image'",
         ),
     ] = None,
     steps: Annotated[
@@ -582,10 +592,12 @@ async def image_to_image_price(
 
             files = None
             if images:
-                files = [
-                    ("images[]", (await prepare_image_upload_async(item, "images"))[1])
-                    for item in images
-                ]
+                files = []
+                for item in images:
+                    files.append(
+                        ("images[]", (await prepare_image_upload_async(item, "images"))[1])
+                    )
+                    check_upload_budget(files)
             elif image:
                 field_name, file_tuple = await prepare_image_upload_async(image, "image")
                 files = [(field_name, file_tuple)]
