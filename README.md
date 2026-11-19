@@ -162,7 +162,7 @@ See the [Remote Deployment](#remote-deployment) section for production deploymen
 Both Claude Desktop and Claude.ai support MCP connectors with built-in OAuth authentication.
 
 1. Get your deAPI token from [app.deapi.ai/settings/api-keys](https://app.deapi.ai/settings/api-keys)
-2. In Claude Desktop or Claude.ai, go to **Settings → Connectors → Add Connector**
+2. In Claude Desktop or Claude.ai, go to **Customize → Connectors → Add custom connector**
 3. Fill in the connector details:
 
 ```
@@ -180,33 +180,19 @@ For details on the OAuth flow, see [AUTH.md](AUTH.md).
 
 ---
 
-#### Option 2: Config File with Bearer Token (Local Development)
+#### Option 2: Request Headers (no OAuth)
 
-**Best for:** Server running on the same machine, quick setup without OAuth.
+Where your Claude plan offers **Request headers** for custom connectors, add the connector with
+no sign-in and the header `Authorization: Bearer YOUR_DEAPI_TOKEN`.
 
-Edit your Claude Desktop config file:
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "deapi": {
-      "url": "http://localhost:8000/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_DEAPI_TOKEN"
-      }
-    }
-  }
-}
-```
-
-Replace `YOUR_DEAPI_TOKEN` with your actual deAPI token. Save the file and restart Claude Desktop.
+Claude Desktop takes remote servers from **Connectors** only: its `claude_desktop_config.json`
+runs local (stdio) servers and is not the place for this server's URL.
 
 #### Other clients
 
 Open the server's root URL (`https://your-server-domain/`) in a browser: it shows the endpoint
-and a ready-to-copy setup for Claude, Claude Code, Cursor, VS Code, Codex CLI and Gemini CLI.
+and a ready-to-copy setup for Claude, ChatGPT, Claude Code, Cursor, VS Code, Codex CLI and
+Gemini CLI.
 Any client that speaks Streamable HTTP works with the endpoint `/mcp` and one of these headers:
 
 - `Authorization: Bearer <your deAPI API key>`

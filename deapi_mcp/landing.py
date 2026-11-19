@@ -230,7 +230,7 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
 <meta name=viewport content="width=device-width, initial-scale=1">
 <meta name=referrer content=no-referrer>
 <title>deAPI MCP Server</title>
-<meta name=description content="Connect Claude, Cursor, VS Code, Codex and other MCP clients to deAPI: image, video, audio, transcription, OCR and embedding models.">
+<meta name=description content="Connect Claude, ChatGPT, Cursor, VS Code, Codex and other MCP clients to deAPI: image, video, audio, transcription, OCR and embedding models.">
 <style>{CSS}</style>
 </head>
 <body>
@@ -267,6 +267,20 @@ Client ID <code>{OAUTH_CLIENT_ID}</code> and, as Client Secret, your deAPI API k
 <p class=note>Where your plan offers <b>Request headers</b> for custom connectors, you can
 instead choose no sign-in and add the header <code>Authorization: Bearer &lt;your key&gt;</code>.
 On Team and Enterprise plans an owner adds connectors under Organization settings.</p>
+</details>
+
+<details>
+<summary>ChatGPT</summary>
+<ol>
+<li>On chatgpt.com, open <b>Settings → Apps &amp; Connectors → Advanced settings</b> and turn on
+<b>Developer mode</b>.</li>
+<li>Choose <b>Create</b>, name the app <code>deAPI</code> and enter the MCP server URL
+<code>{e_url}</code>.</li>
+<li>Set <b>Authentication</b> to <b>OAuth</b> and enter Client ID
+<code>{OAUTH_CLIENT_ID}</code> and, as Client Secret, your deAPI API key.</li>
+<li>Confirm and create the app, then enable it in a chat.</li>
+</ol>
+<p class=note>Developer mode depends on your ChatGPT plan and is set up on the web.</p>
 </details>
 
 <details>

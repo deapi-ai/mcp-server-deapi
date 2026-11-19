@@ -28,7 +28,7 @@ releases are git tags `vX.Y.Z`.
   header. It goes through the same checks as `Authorization: Bearer`, which wins when a request
   carries both. A key in the URL is still never read.
 - `GET /` serves a setup page: the endpoint, where to get a key, a section per client (Claude,
-  Claude Code, Cursor, VS Code, Codex CLI, Gemini CLI, any other client), a way to check the
+  ChatGPT, Claude Code, Cursor, VS Code, Codex CLI, Gemini CLI, any other client), a way to check the
   connection and the tool list, generated from the server's own registry. One static document
   with no script and no external resource, under a strict Content-Security-Policy.
 
@@ -50,6 +50,10 @@ releases are git tags `vX.Y.Z`.
 
   Nothing is removed: tokens issued by 0.6.x stay valid, and the metadata advertises neither
   dynamic client registration nor client ID metadata documents.
+
+### Fixed
+- README: Claude Desktop takes remote servers from Connectors; the `claude_desktop_config.json`
+  example with a URL and headers, which Claude Desktop does not read for remote servers, is gone.
 
 ## 0.6.3
 
