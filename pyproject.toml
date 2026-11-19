@@ -3,7 +3,7 @@ name = "deapi-mcp"
 version = "0.7.0"
 description = "Production-ready MCP server for the deAPI REST API"
 authors = [
-    {name = "Adam Iglewski"}
+    {name = "deAPI Team"}
 ]
 readme = "README.md"
 license = "MIT"
