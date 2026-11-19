@@ -83,3 +83,9 @@ def test_tool_descriptions_are_escaped():
     html = render_landing("https://mcp.example.com", [tool])
     assert "&lt;b&gt;bold&lt;/b&gt; first line" in html
     assert "second line" not in html
+
+
+def test_page_carries_the_inline_logo(app_client):
+    text = app_client.get("/").text
+    assert text.count("aria-label=deAPI") == 2  # header and footer
+    assert 'href="https://deapi.ai/"' in text

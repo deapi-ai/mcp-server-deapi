@@ -30,9 +30,13 @@ releases are git tags `vX.Y.Z`.
 - `GET /` serves a setup page: the endpoint, where to get a key, a section per client (Claude,
   ChatGPT, Claude Code, Cursor, VS Code, Codex CLI, Gemini CLI, any other client), a way to check the
   connection and the tool list, generated from the server's own registry. One static document
-  with no script and no external resource, under a strict Content-Security-Policy.
+  with no script and no external resource, under a strict Content-Security-Policy. It follows
+  the deapi.ai look (dark, amber accents, the deAPI logo inline as SVG).
 
 ### Changed
+- A `401 invalid_token` on `/mcp` now says how to fix it: check the deAPI API key, or sign in
+  again with OAuth. FastMCP's own text told clients to re-register, which this server does not
+  support. Status, error code and `resource_metadata` are unchanged.
 - OAuth stays a pre-registered client (`client_id=deapi-mcp`, the API key as `client_secret`),
   now tightened where it fell short of the spec:
   - `POST /token` accepts `client_secret_basic`, which the metadata already advertised but the

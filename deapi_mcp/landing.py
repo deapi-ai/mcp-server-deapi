@@ -25,6 +25,10 @@ MCP_DOCS_URL = "https://docs.deapi.ai/execution-modes-and-integrations/mcp-serve
 REPO_URL = "https://github.com/deapi-ai/mcp-server-deapi"
 SECURITY_URL = "https://github.com/deapi-ai/mcp-server-deapi/blob/main/SECURITY.md"
 OAUTH_CLIENT_ID = "deapi-mcp"
+HOME_URL = "https://deapi.ai/"
+
+# The deAPI logo (as in the deAPI docs), inline so the page loads nothing.
+LOGO_SVG = '<svg class=logo xmlns="http://www.w3.org/2000/svg" viewBox="0 0 81.585 30.472" role=img aria-label=deAPI><g><path d="M34.149,19.256v-4.547l1.615-1.631h3.105l.925.8v-4.187h2.07v11.196h-1.944v-1.207l-1.208,1.207h-2.948l-1.615-1.631ZM38.525,19.131l1.27-1.302v-2.038l-1.066-.957h-1.913l-.596.611v3.074l.596.611h1.709Z" fill="#ffba00"/><path d="M43.59,19.288v-4.579l1.615-1.631h4.407l1.631,1.631v2.963h-5.583v1.004l.502.517h2.556l.47-.486v-.407h2.039v1.018l-1.553,1.568h-4.501l-1.584-1.599ZM49.173,16.231v-.91l-.533-.549h-2.447l-.533.549v.91h3.513Z" fill="#ffba00"/><path d="M55.884,9.911h1.945l4.014,10.977h-2.164l-.894-2.43h-3.858l-.894,2.43h-2.164l4.014-10.977ZM58.315,16.7l-1.459-4.171h-.031l-1.411,4.171h2.901Z" fill="#ffba00"/><path d="M62.941,9.911h6.885l1.678,1.694v3.841l-1.694,1.71h-4.736v3.732h-2.133v-10.977ZM68.854,15.368l.549-.549v-2.572l-.549-.55h-3.78v3.67h3.78Z" fill="#ffba00"/><path d="M73.15,9.911h2.133v10.977h-2.133v-10.977Z" fill="#ffba00"/></g><g><path d="M27.865,11.713v-2h-3.511v-2.595l-1-1h-2.595v-2.276l-2-1.155v3.43h-2.523V1.231l-.25-.144h-1.5l-.25.144v4.887h-2.523v-3.431l-2,1.155v2.276h-2.595l-1,1v2.595h-3.511v2h3.511v2.523h-3.511v2h3.511v2.522h-3.511v2h3.511v2.596l1,1h2.595v2.275l2,1.155v-3.43h2.523v4.887l.25.144h1.5l.25-.144v-4.887h2.523v3.43l2-1.155v-2.275h2.595l1-1v-2.596h3.511v-2h-3.511v-2.522h3.511v-2h-3.511v-2.523h3.511ZM22.354,22.355h-14.236v-14.236h14.236v14.236Z" fill="#ffba00"/><polygon points="20.742 9.691 18.222 9.691 9.727 20.781 12.247 20.781 20.742 9.691" fill="#ffba00"/></g></svg>'
 
 # Tool modules (deapi_mcp.tools.<name>) in page order, with their heading.
 CATEGORIES = (
@@ -37,46 +41,76 @@ CATEGORIES = (
 )
 
 CSS = """
-:root{--bg:#fbfbfa;--fg:#1d1d1f;--muted:#5f6368;--line:#e3e3e0;--card:#fff;
---code:#f3f3f1;--accent:#3346d3;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root{--bg:#141416;--fg:#ececee;--muted:#a1a1a8;
---line:#2c2c31;--card:#1b1b1f;--code:#232328;--accent:#8c9bff}}
+:root{--bg:#11100d;--bg-deep:#0e0d0b;--card:#1a1710;--line:#363021;--line-soft:#262217;
+--fg:#f2f0ea;--muted:#bcbcbc;--dim:#938367;--amber:#ffba00;--amber-hi:#feca00;
+--sans:Switzer,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+--mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color-scheme:dark}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,
-"Segoe UI",Roboto,sans-serif}
-main{max-width:46rem;margin:0 auto;padding:3rem 1rem 4rem}
-h1{font-size:2rem;line-height:1.2;margin:0 0 .5rem}
-h2{font-size:1.25rem;margin:2.5rem 0 .75rem}
-h3{font-size:1rem;margin:1.5rem 0 .5rem}
-p{margin:.5rem 0}
-a{color:var(--accent)}
-.lead{color:var(--muted);font-size:1.075rem;margin-bottom:1.5rem}
-.endpoint{background:var(--card);border:1px solid var(--line);border-radius:10px;
-padding:1rem 1.25rem}
-.endpoint .label{color:var(--muted);font-size:.85rem;margin:0}
-.endpoint code{font-size:1.05rem;background:none;padding:0}
-code{font:.9em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);
-padding:.1em .35em;border-radius:5px;overflow-wrap:anywhere}
-pre{background:var(--code);border-radius:8px;padding:.85rem 1rem;overflow-x:auto;margin:.5rem 0}
-pre code{background:none;padding:0;user-select:all}
+body{margin:0;background:var(--bg);color:var(--muted);font:15px/1.7 var(--mono)}
+.bar{height:4px;background:linear-gradient(90deg,#5c4a12,var(--amber),#5c4a12)}
+header{max-width:58rem;margin:1.25rem auto 0;padding:.9rem 1.25rem;display:flex;
+align-items:center;gap:1rem;border:1px solid var(--line-soft);border-radius:10px;
+background:var(--bg-deep)}
+header .home{display:flex;align-items:center;text-decoration:none}
+.logo{height:2.4rem;width:auto;display:block}
+.pill{font-size:.75rem;color:var(--amber);border:1px solid var(--line);border-radius:999px;
+padding:.1rem .6rem;letter-spacing:.04em}
+header nav{margin-left:auto;display:flex;gap:.6rem;flex-wrap:wrap}
+.btn{display:inline-block;font:700 .85rem/1 var(--mono);text-decoration:none;
+padding:.8rem 1.1rem;border-radius:4px;border:1px solid var(--amber);color:var(--amber)}
+.btn.solid{background:var(--amber);color:#11100d}
+.btn:hover{background:var(--amber-hi);border-color:var(--amber-hi);color:#11100d}
+main{max-width:52rem;margin:0 auto;padding:3.5rem 1.25rem 4rem}
+.facts{text-align:center;color:var(--fg);font-size:.9rem;margin:0}
+.facts span{margin:0 .7rem;white-space:nowrap}
+.facts span::before{content:"•";margin-right:.5rem}
+h1{font:600 clamp(2.4rem,7vw,4.2rem)/1.05 var(--sans);color:#fff;text-align:center;
+margin:.9rem 0 1rem;letter-spacing:-.01em}
+h1 em{font-style:normal;color:var(--amber)}
+.lead{text-align:center;font-size:1.05rem;max-width:40rem;margin:0 auto 2rem}
+.cta{display:flex;justify-content:center;gap:.8rem;flex-wrap:wrap;margin-bottom:2.5rem}
+h2{font:600 1.6rem/1.2 var(--sans);color:#fff;margin:3.5rem 0 1rem}
+h2 small{display:block;font:500 .8rem var(--mono);color:var(--amber);letter-spacing:.08em;
+text-transform:uppercase;margin-bottom:.4rem}
+h3{font:600 1.05rem var(--sans);color:var(--fg);margin:1.8rem 0 .6rem}
+p{margin:.6rem 0}
+a{color:var(--amber)}
+b,strong,i{color:var(--fg)}
+.endpoint{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--amber);
+border-radius:8px;padding:1rem 1.25rem}
+.endpoint .label{color:var(--dim);font-size:.8rem;margin:0;letter-spacing:.04em}
+.endpoint code{font-size:1.1rem;background:none;padding:0;color:var(--amber)}
+code{font:.92em var(--mono);color:var(--fg);background:var(--line-soft);padding:.1em .35em;
+border-radius:4px;overflow-wrap:anywhere}
+pre{background:var(--bg-deep);border:1px solid var(--line-soft);border-radius:8px;
+padding:.9rem 1rem;overflow-x:auto;margin:.6rem 0}
+pre code{background:none;padding:0;user-select:all;overflow-wrap:normal;color:#e9e4d6}
 .endpoint code,td code{user-select:all}
-details{background:var(--card);border:1px solid var(--line);border-radius:10px;
-padding:.25rem 1.25rem;margin:.6rem 0}
-details[open]{padding-bottom:1rem}
-summary{cursor:pointer;font-weight:600;padding:.6rem 0}
-.note{color:var(--muted);font-size:.9rem}
+details{background:var(--card);border:1px solid var(--line);border-radius:8px;
+padding:.2rem 1.25rem;margin:.6rem 0}
+details[open]{padding-bottom:1rem;border-color:#4a4029}
+summary{cursor:pointer;font:600 1rem var(--sans);color:var(--fg);padding:.75rem 0}
+summary::marker{color:var(--amber)}
+.note{color:var(--dim);font-size:.85rem}
 ol,ul{padding-left:1.4rem}
-li{margin:.25rem 0}
-table{border-collapse:collapse;width:100%;font-size:.95rem}
-td{border-top:1px solid var(--line);padding:.45rem .5rem .45rem 0;vertical-align:top}
+li{margin:.3rem 0}
+li::marker{color:var(--amber)}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+td{border-top:1px solid var(--line-soft);padding:.5rem .5rem .5rem 0;vertical-align:top}
 td:first-child{white-space:nowrap;padding-right:1rem}
-pre code{overflow-wrap:normal}
-@media (max-width:560px){td{display:block;border-top:0;padding:0}
-td:first-child{border-top:1px solid var(--line);padding-top:.45rem}
-td:last-child{padding-bottom:.45rem}}
-footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);color:var(--muted);
-font-size:.9rem}
-footer a{margin-right:1rem}
+td code{color:var(--amber);background:none;padding:0}
+@media (max-width:640px){header{flex-wrap:wrap}header nav{margin-left:0;width:100%}
+.facts span{display:inline-block;margin:.1rem .5rem}
+td{display:block;border-top:0;padding:0}
+td:first-child{border-top:1px solid var(--line-soft);padding-top:.5rem}
+td:last-child{padding-bottom:.5rem}}
+footer{margin-top:4rem;padding-top:1.25rem;border-top:1px solid var(--line-soft);
+color:var(--dim);font-size:.85rem;display:flex;flex-wrap:wrap;gap:.5rem 1.25rem;
+align-items:center}
+footer .logo{height:1.5rem}
+footer a{color:var(--muted);text-decoration:none}
+footer a:hover{color:var(--amber)}
+footer .version{margin-left:auto}
 """
 
 _STYLE_HASH = base64.b64encode(hashlib.sha256(CSS.encode()).digest()).decode()
@@ -234,11 +268,22 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
 <style>{CSS}</style>
 </head>
 <body>
+<div class=bar></div>
+<header>
+<a class=home href="{HOME_URL}">{LOGO_SVG}</a>
+<span class=pill>MCP SERVER</span>
+<nav><a class=btn href="{MCP_DOCS_URL}">Docs</a><a class="btn solid"
+href="{KEYS_URL}">Get API key</a></nav>
+</header>
 <main>
-<h1>deAPI MCP Server</h1>
+<p class=facts><span>{tool_count} tools</span><span>Streamable HTTP</span><span>Pay per
+use</span></p>
+<h1>deAPI <em>MCP Server</em></h1>
 <p class=lead>Generate images, video, speech and music, transcribe audio and video, read text
 from images and create embeddings, all from your AI assistant. {tool_count} tools over one
 endpoint, billed to your deAPI balance.</p>
+<div class=cta><a class="btn solid" href="#connect">Connect your client</a><a class=btn
+href="#tools">See the tools</a></div>
 
 <div class=endpoint>
 <p class=label>MCP endpoint · Streamable HTTP</p>
@@ -247,13 +292,13 @@ endpoint, billed to your deAPI balance.</p>
 <p class=note>This server speaks Streamable HTTP only. There is no SSE endpoint; a client
 that can only use SSE needs an update.</p>
 
-<h2>1. Get an API key</h2>
+<h2><small>Step 1</small>Get an API key</h2>
 <p>Create a key at <a href="{KEYS_URL}">app.deapi.ai/settings/api-keys</a>. Jobs run on your
 deAPI balance, so treat the key like a password. The examples below read it from the
 <code>DEAPI_API_KEY</code> environment variable where the client allows that, which keeps it
 out of config files and shell history.</p>
 
-<h2>2. Connect your client</h2>
+<h2 id=connect><small>Step 2</small>Connect your client</h2>
 
 <details open>
 <summary>Claude (claude.ai and Claude Desktop)</summary>
@@ -331,7 +376,7 @@ just "HTTP") and send your key in one of these headers:</p>
 PKCE (S256). The server does not offer dynamic client registration.</p>
 </details>
 
-<h2>3. Check that it works</h2>
+<h2><small>Step 3</small>Check that it works</h2>
 <p>Ask your assistant to <i>"check my deAPI balance"</i>, or list the tools from a terminal:</p>
 {_code(curl)}
 <p>A key deAPI does not accept is refused with <code>401</code> as soon as the client
@@ -353,14 +398,15 @@ Never put the key in the URL; it is only read from the headers above.</p>
 the job is still running it returns <code>done: false</code> with a <code>job_id</code>, and
 <code>check_job_status</code> picks the wait up again. Your assistant does this for you.</p>
 
-<h2>Tools</h2>
+<h2 id=tools>Tools</h2>
 {_tools_html(tools)}
 
 <footer>
-<p><a href="{MCP_DOCS_URL}">MCP server docs</a><a href="{DOCS_URL}">deAPI docs</a><a
+<a href="{HOME_URL}">{LOGO_SVG}</a>
+<a href="{MCP_DOCS_URL}">MCP server docs</a><a href="{DOCS_URL}">deAPI docs</a><a
 href="{KEYS_URL}">API keys</a><a href="{REPO_URL}">Source</a><a
-href="{SECURITY_URL}">Security</a></p>
-<p>deAPI MCP Server {escape(__version__)}</p>
+href="{SECURITY_URL}">Security</a>
+<span class=version>MCP Server {escape(__version__)}</span>
 </footer>
 </main>
 </body>

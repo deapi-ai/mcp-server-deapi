@@ -4,6 +4,8 @@ This module implements FastMCP's AuthProvider interface to properly integrate
 JWT/Bearer token authentication into the MCP server.
 """
 
+import json
+import re
 from typing import Any
 
 from fastmcp.server.auth import AccessToken, AuthProvider
@@ -44,6 +46,64 @@ class ApiKeyHeaderMiddleware:
                     scope = dict(scope)
                     scope["headers"] = [*headers, (b"authorization", b"Bearer " + key)]
         await self.app(scope, receive, send)
+
+
+# Shown to the user by clients that surface error_description. No double quotes: it sits
+# inside a quoted WWW-Authenticate parameter.
+INVALID_TOKEN_DESCRIPTION = (
+    "The deAPI API key or access token was not accepted. Check the key at "
+    "https://app.deapi.ai/settings/api-keys, or sign in again if you connected with OAuth."
+)
+_DESCRIPTION_PARAM = re.compile(rb'error_description="[^"]*"')
+
+
+class InvalidTokenDescriptionMiddleware:
+    """Replace FastMCP's text in a 401 ``invalid_token`` answer on /mcp with ours.
+
+    FastMCP tells the client to "re-register and obtain new tokens", which suits a
+    server with dynamic client registration. This one has none: the fix is a working
+    API key, or signing in again with the pre-registered client. Status, error code
+    and ``resource_metadata`` are kept; only ``error_description`` changes, in the
+    ``WWW-Authenticate`` header and in the JSON body.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/mcp"):
+            await self.app(scope, receive, send)
+            return
+
+        replaced = False
+
+        async def rewriting_send(message: Any) -> None:
+            nonlocal replaced
+            if replaced:
+                return  # the original body; ours has been sent already
+            if message["type"] == "http.response.start" and message["status"] == 401:
+                headers = list(message.get("headers") or [])
+                challenge = next((v for k, v in headers if k.lower() == b"www-authenticate"), b"")
+                if b'error="invalid_token"' in challenge:
+                    body = json.dumps(
+                        {"error": "invalid_token", "error_description": INVALID_TOKEN_DESCRIPTION}
+                    ).encode()
+                    description = f'error_description="{INVALID_TOKEN_DESCRIPTION}"'.encode()
+                    rewritten = []
+                    for name, value in headers:
+                        lower = name.lower()
+                        if lower == b"www-authenticate":
+                            value = _DESCRIPTION_PARAM.sub(lambda _: description, value)
+                        elif lower == b"content-length":
+                            value = str(len(body)).encode()
+                        rewritten.append((name, value))
+                    replaced = True
+                    await send({**message, "headers": rewritten})
+                    await send({"type": "http.response.body", "body": body})
+                    return
+            await send(message)
+
+        await self.app(scope, receive, rewriting_send)
 
 
 class DeapiAuthProvider(AuthProvider):

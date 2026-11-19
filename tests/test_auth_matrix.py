@@ -404,3 +404,26 @@ def test_pkce_must_be_a_well_formed_s256_challenge(app_client, overrides):
     location = parse_qs(urlparse(r.headers["location"]).query)
     assert location["error"] == ["invalid_request"]
     assert "code" not in location
+
+
+# --- 401 wording --------------------------------------------------------------
+
+
+def test_invalid_token_answer_says_how_to_fix_it(app_client, api):
+    from deapi_mcp.fastmcp_auth import INVALID_TOKEN_DESCRIPTION
+
+    r = mcp(app_client, INITIALIZE, token=BAD)
+    assert r.status_code == 401
+    challenge = r.headers["www-authenticate"]
+    assert f'error_description="{INVALID_TOKEN_DESCRIPTION}"' in challenge
+    assert 'error="invalid_token"' in challenge
+    assert "resource_metadata=" in challenge
+    assert "re-register" not in challenge
+    assert r.json() == {"error": "invalid_token", "error_description": INVALID_TOKEN_DESCRIPTION}
+    assert int(r.headers["content-length"]) == len(r.content)
+
+
+def test_missing_token_answer_is_left_alone(app_client, api):
+    r = mcp(app_client, INITIALIZE)
+    assert r.status_code == 401
+    assert "error=" not in r.headers["www-authenticate"]
