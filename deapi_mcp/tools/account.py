@@ -101,7 +101,7 @@ async def get_account_usage(
     'deleted' all keys deleted since. Needs an ADMIN key."""
     try:
         response = await _get("account/usage", _usage_params(from_date, to_date, group_by))
-        return {"success": True, "usage": response}
+        return {"success": True, "usage": _data(response)}
     except DeapiAPIError as e:
         return _error(e)
 
@@ -157,7 +157,7 @@ async def get_api_key_usage(
     try:
         endpoint = "key/usage" if key_id is None else f"keys/{key_id}/usage"
         response = await _get(endpoint, _usage_params(from_date, to_date, group_by))
-        return {"success": True, "usage": response}
+        return {"success": True, "usage": _data(response)}
     except DeapiAPIError as e:
         return _error(e)
 
