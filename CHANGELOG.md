@@ -3,6 +3,40 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.8.0
+
+### Added
+- Account and API key tools (`deapi_mcp/tools/account.py`): `get_account`,
+  `get_account_usage`, `list_payments`, `list_api_keys`, `get_api_key` and
+  `get_api_key_usage` read, marked read-only. They need an ADMIN key, except a key's own
+  details and usage; an API-role key gets a message with the dashboard link.
+- `create_api_key`, `update_api_key` and `delete_api_key`, behind
+  `DEAPI_KEY_MANAGEMENT_TOOLS` (default `false`). Off, they change nothing and answer with
+  the dashboard link (marked read-only, so clients do not ask first). On, they act and are
+  marked destructive, so clients ask the user before each call. A created key's secret is
+  returned once, in the tool result.
+- The sign-in screen shows the application's picture for well-known clients (Claude,
+  ChatGPT, VS Code, GitHub Copilot, Zed, Raycast, Goose, Cursor) identified by their metadata
+  document: its `logo_uri` when that is on the client's own site (or a logo host known for
+  it, such as ChatGPT's), else the favicon of its host. The server fetches it (public
+  addresses only, no redirects, 160 kB, 1.5 s), keeps only PNG, ICO, GIF, JPEG or WebP
+  (never SVG), and puts it into the page as a `data:` URI, so the browser loads nothing
+  from elsewhere. Cached a day. Every other client, and every self-registered one, keeps a
+  letter: whoever runs a host decides what its favicon shows, so a picture is shown only
+  where it cannot be someone else's.
+- deAPI's icon: served at `/favicon.ico` and `/icon-{32,64,128}.png`, linked from the setup
+  page and the sign-in screen, and announced in the MCP `serverInfo` (`icons`, `websiteUrl`)
+  for clients that show a connector's picture.
+
+### Changed
+- The links on the sign-in screen (API keys page, docs, logo) open in a new tab, so
+  getting a key never leaves the sign-in under way.
+- The setup page gives each client its choices side by side: the deAPI sign-in window
+  (recommended: the key never goes into a config file) and the key in a header, with the
+  commands for each (`claude mcp add --scope user`, `codex mcp login`, `gemini mcp add`,
+  `/mcp auth`, VS Code's MCP: Add Server). It also says that key management is off on this
+  server, and why.
+
 ## 0.7.3
 
 Connecting from more clients. Each popular MCP client's own registration or metadata

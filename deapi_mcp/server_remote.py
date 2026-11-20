@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 
 import uvicorn
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 
 # Import FastMCP-compatible auth provider
@@ -23,8 +24,12 @@ from .fastmcp_auth import (
     InvalidTokenDescriptionMiddleware,
     OAuthCorsMiddleware,
 )
+from .icons import WEBSITE_URL, favicon, mcp_icons, sized_icon
 
 # Import tool functions
+from .tools.account import MANAGEMENT_TOOLS as ACCOUNT_MANAGEMENT_TOOLS
+from .tools.account import READ_TOOLS as ACCOUNT_READ_TOOLS
+from .tools.account import create_api_key
 from .tools.audio import (
     audio_transcription,
     audio_transcription_price,
@@ -70,7 +75,13 @@ from .webhooks import JobRegistry, get_job_registry, set_job_registry
 
 # Initialize FastMCP server WITHOUT auth (will be added later)
 # Auth requires knowing the base URL which we don't have until runtime
-mcp = FastMCP(name="deAPI AI API", version=__version__, auth=None)
+mcp = FastMCP(
+    name="deAPI AI API",
+    version=__version__,
+    website_url=WEBSITE_URL,
+    icons=mcp_icons(os.getenv("PUBLIC_BASE_URL")),
+    auth=None,
+)
 
 
 def register_core_tools(server: FastMCP) -> None:
@@ -125,6 +136,23 @@ def register_core_tools(server: FastMCP) -> None:
     server.tool()(get_balance)
     server.tool()(get_available_models)
     server.tool()(check_job_status)
+    # Account and API keys. Reading changes nothing. The key management tools are
+    # destructive when DEAPI_KEY_MANAGEMENT_TOOLS is on (clients then ask the user first);
+    # off, they only return the dashboard link, so they are marked read-only.
+    for reader in ACCOUNT_READ_TOOLS:
+        server.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))(reader)
+    from .config import settings as deapi_settings
+
+    managing = deapi_settings.key_management_tools
+    for manager in ACCOUNT_MANAGEMENT_TOOLS:
+        server.tool(
+            annotations=ToolAnnotations(
+                read_only_hint=not managing,
+                destructive_hint=managing,
+                idempotent_hint=manager is not create_api_key,
+                open_world_hint=True,
+            )
+        )(manager)
 
 
 # Register the core tools on this module's server instance (import-time behaviour).
@@ -308,6 +336,9 @@ def create_app(
         return landing_response(public_base_url(request), landing_tools)
 
     starlette_app.routes.append(Route("/", landing_page, methods=["GET"]))
+    # deAPI's icon: the pages' favicon and the picture announced in serverInfo
+    starlette_app.routes.append(Route("/favicon.ico", favicon, methods=["GET"]))
+    starlette_app.routes.append(Route("/icon-{size:int}.png", sized_icon, methods=["GET"]))
 
     if metrics is not None:
         metrics.wrap_app(starlette_app, server)

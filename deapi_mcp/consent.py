@@ -40,6 +40,7 @@ from starlette.responses import HTMLResponse, Response
 
 from . import auth_code_store
 from .auth_code_store import AuthCodeStoreUnavailable, build_redis_client
+from .client_icons import client_icon
 from .config import settings
 from .key_verifier import KeyStatus, get_key_verifier
 from .landing import CSS, HOME_URL, KEYS_URL, LOGO_SVG, MCP_DOCS_URL
@@ -64,6 +65,7 @@ border-radius:12px;padding:1.4rem 2rem 1.25rem;line-height:1.55;font-size:14px}
 background:var(--bg-deep);border:1px solid var(--line-soft);border-radius:8px}
 .avatar{width:2.6rem;height:2.6rem;border-radius:8px;background:#2a2416;color:var(--amber);
 display:flex;align-items:center;justify-content:center;font:700 1.1rem var(--sans);flex:none}
+img.avatar{object-fit:contain;background:#fff;padding:4px}
 .who b{display:block;font-family:var(--sans);font-size:1.05rem;overflow-wrap:anywhere}
 .who span{font-size:.8rem;color:var(--dim);overflow-wrap:anywhere}
 .dest{font-size:.9rem;margin:.2rem 0 .6rem}
@@ -253,6 +255,10 @@ def reset_limiter(limiter: Optional[KeyFailureLimiter] = None) -> None:
 
 # --- pages ------------------------------------------------------------------------------------
 
+# Links on these pages open in a new tab, so following one never leaves the sign-in under
+# way. noopener and noreferrer: the new page gets no handle on this one and no referrer.
+NEW_TAB = 'target=_blank rel="noopener noreferrer"'
+
 
 def _headers() -> dict[str, str]:
     # No form-action: Chromium applies it to every redirect that follows the form's POST,
@@ -262,8 +268,8 @@ def _headers() -> dict[str, str]:
     # stop; default-src 'none' still blocks every fetch.
     return {
         "Content-Security-Policy": (
-            f"default-src 'none'; style-src 'sha256-{_STYLE_HASH}'; base-uri 'none'; "
-            "frame-ancestors 'none'"
+            f"default-src 'none'; style-src 'sha256-{_STYLE_HASH}'; img-src 'self' data:; "
+            "base-uri 'none'; frame-ancestors 'none'"
         ),
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
@@ -283,12 +289,13 @@ def _page(title: str, body: str) -> str:
 <meta name=referrer content=no-referrer>
 <meta name=robots content=noindex>
 <title>{escape(title)}</title>
+<link rel=icon type=image/png sizes=64x64 href="/icon-64.png">
 <style>{STYLE}</style>
 </head>
 <body>
 <div class=bar></div>
 <header>
-<a class=home href="{HOME_URL}">{LOGO_SVG}</a>
+<a class=home href="{HOME_URL}" {NEW_TAB}>{LOGO_SVG}</a>
 <span class=pill>MCP SERVER</span>
 </header>
 <main class=signin>
@@ -304,7 +311,7 @@ def error_page(message: str, status_code: int = 400) -> HTMLResponse:
 <h1>Cannot connect</h1>
 <div class=error>{escape(message)}</div>
 <p class=hint>Start the connection again from your application. If this keeps happening,
-see the <a href="{MCP_DOCS_URL}">MCP server docs</a>.</p>
+see the <a href="{MCP_DOCS_URL}" {NEW_TAB}>MCP server docs</a>.</p>
 </div>"""
     return HTMLResponse(
         _page("Cannot connect to deAPI", body), status_code=status_code, headers=_headers()
@@ -362,7 +369,10 @@ def consent_page(
     csrf: str,
     error: Optional[str] = None,
     status_code: int = 200,
+    *,
+    icon: Optional[str] = None,
 ) -> HTMLResponse:
+    """The sign-in screen. ``icon``: the client's picture as a data: URI (client_icons)."""
     returns = escape(_host_label(redirect_uri))
     if client.verified_host:
         # The publisher is the host serving the client's metadata. deAPI does not vouch for
@@ -375,10 +385,15 @@ def consent_page(
         initial = "?"
         badge = "registered itself, name not verified"
     error_html = f"<div class=error role=alert>{escape(error)}</div>" if error else ""
+    avatar = (
+        f'<img class=avatar src="{escape(icon)}" alt="" width=42 height=42>'
+        if icon and icon.startswith("data:image/")
+        else f"<div class=avatar>{initial}</div>"
+    )
     body = f"""<div class=auth>
 <h1>Connect to deAPI</h1>
 <p>An application wants to use deAPI models on your behalf.</p>
-<div class=who><div class=avatar>{initial}</div><div><b>{name}</b><span>{badge}</span></div></div>
+<div class=who>{avatar}<div><b>{name}</b><span>{badge}</span></div></div>
 <p class=dest>Access goes to <b>{returns}</b></p>
 {_warnings(client, redirect_uri)}
 <p>If you continue, this application will be able to:</p>
@@ -394,7 +409,7 @@ def consent_page(
 <label for=api_key>deAPI API key</label>
 <input id=api_key name=api_key type=password autocomplete=off spellcheck=false
 required maxlength={MAX_KEY_LENGTH} placeholder="sk-dp-...">
-<p class=hint>Create or copy a key at <a href="{KEYS_URL}">app.deapi.ai/settings/api-keys</a>.
+<p class=hint>Create or copy a key at <a href="{KEYS_URL}" {NEW_TAB}>app.deapi.ai/settings/api-keys</a>.
 Consider a separate key for each app, so you can revoke one without the others.</p>
 <div class=actions><button type=submit name=action value=deny formnovalidate>Cancel</button><button
 type=submit name=action value=allow class=solid>Allow access</button></div>
@@ -461,7 +476,9 @@ async def show_consent(
 ) -> Response:
     """Render the sign-in screen for an already validated authorization request."""
     csrf = request.cookies.get(_csrf_cookie_name(request)) or secrets.token_urlsafe(32)
-    page = consent_page(client, redirect_uri, sign_request(fields), csrf)
+    page = consent_page(
+        client, redirect_uri, sign_request(fields), csrf, icon=await client_icon(client)
+    )
     return _with_csrf_cookie(page, request, csrf)
 
 
@@ -507,6 +524,11 @@ async def submit_consent(request: Request) -> Response:
         )
 
     signed = raw_request if isinstance(raw_request, str) else ""
+
+    async def render(*args: Any) -> HTMLResponse:
+        # The picture is looked up only when a page is actually drawn
+        return consent_page(*args, icon=await client_icon(client))
+
     ip = _client_ip(request)
     limiter = get_limiter()
     too_many = (
@@ -514,18 +536,18 @@ async def submit_consent(request: Request) -> Response:
         429,
     )
     if await limiter.blocked(ip):
-        return consent_page(client, redirect_uri, signed, csrf_cookie, *too_many)
+        return await render(client, redirect_uri, signed, csrf_cookie, *too_many)
 
     key_value = form.get("api_key")
     api_key = key_value.strip() if isinstance(key_value, str) else ""
     if len(api_key) < 10 or len(api_key) > MAX_KEY_LENGTH:
-        return consent_page(
+        return await render(
             client, redirect_uri, signed, csrf_cookie, "Enter your deAPI API key.", 400
         )
 
     # Counted before the check, given back unless deAPI refuses the key
     if not await limiter.attempt(ip):
-        return consent_page(client, redirect_uri, signed, csrf_cookie, *too_many)
+        return await render(client, redirect_uri, signed, csrf_cookie, *too_many)
     status = (
         await get_key_verifier().verify(api_key, sign_in=True)
         if settings.verify_api_keys
@@ -534,7 +556,7 @@ async def submit_consent(request: Request) -> Response:
     if status is not KeyStatus.INVALID:
         await limiter.refund(ip)
     if status is KeyStatus.INVALID:
-        return consent_page(
+        return await render(
             client,
             redirect_uri,
             signed,
@@ -543,7 +565,7 @@ async def submit_consent(request: Request) -> Response:
             400,
         )
     if status is not KeyStatus.VALID:
-        return consent_page(
+        return await render(
             client,
             redirect_uri,
             signed,
@@ -572,7 +594,7 @@ async def submit_consent(request: Request) -> Response:
         logger.error("Authorization code store unavailable during sign-in")
         stored = None
     if not stored:
-        return consent_page(
+        return await render(
             client,
             redirect_uri,
             signed,

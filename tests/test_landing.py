@@ -55,7 +55,11 @@ def test_page_loads_nothing_and_runs_only_its_own_script(app_client):
     text = app_client.get("/").text
     assert text.count("<script") == 1
     assert "<script src" not in text
-    assert not re.search(r"<(img|link|iframe|object|embed)\b", text)
+    assert not re.search(r"<(img|iframe|object|embed)\b", text)
+    # One link element: the favicon, served by this server
+    assert re.findall(r"<link\b[^>]*>", text) == [
+        '<link rel=icon type=image/png sizes=64x64 href="/icon-64.png">'
+    ]
     assert " style=" not in text  # inline style attributes would break the CSP
 
 
@@ -106,7 +110,10 @@ def test_every_url_and_snippet_has_a_copy_button(app_client):
     assert text.count('data-copy="deapi-mcp"') == text.count("<code>deapi-mcp</code>")
     # Every snippet has its own button with the snippet's full text
     assert text.count("<pre>") == text.count("<div class=snippet>")
-    assert 'data-copy="claude mcp add --transport http deapi https://mcp.test/mcp' in text
+    assert (
+        'data-copy="claude mcp add --transport http --scope user deapi https://mcp.test/mcp"'
+        in text
+    )
     # Hidden until the script runs, so a page without JavaScript shows no dead buttons
     assert "class=copy-btn hidden data-copy" in text
     assert "class=copy-btn data-copy" not in text
@@ -139,3 +146,19 @@ def test_a_host_header_that_is_not_a_plain_host_is_not_used(monkeypatch):
     assert public_base_url(request("[::1]:8000")) == "https://[::1]:8000"
     for bad in ("a.example;id;x", "a.example$(id)", "a.example&x", "a.example'x"):
         assert public_base_url(request(bad)) == PLACEHOLDER_BASE_URL, bad
+
+
+def test_key_management_note_follows_the_switch(monkeypatch):
+    import asyncio
+
+    from deapi_mcp.config import settings
+    from deapi_mcp.server_remote import mcp
+
+    tools = asyncio.run(mcp.list_tools(run_middleware=False))
+    page = render_landing("https://mcp.example.com", tools)
+    assert "Creating, changing and deleting keys is off on this server" in page
+    assert 'href="https://app.deapi.ai/settings/api-keys">API keys page</a>' in page
+    monkeypatch.setattr(settings, "key_management_tools", True)
+    page = render_landing("https://mcp.example.com", tools)
+    assert "Key management is on." in page
+    assert "is off on this server" not in page

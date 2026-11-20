@@ -130,6 +130,8 @@ class OAuthClient:
     kind: str  # "cimd" or "dcr"
     name: str
     redirect_uris: tuple[str, ...]
+    # From a metadata document only; shown only from the client's own site (client_icons)
+    logo_uri: Optional[str] = None
 
     @property
     def verified_host(self) -> Optional[str]:
@@ -540,7 +542,9 @@ async def _load_cimd_client(client_id: str) -> Optional[OAuthClient]:
         logger.info("Client metadata document rejected (%s)", type(exc).__name__)
         _note_failure(client_id)
         return None
-    client = OAuthClient(client_id, "cimd", name, uris)
+    logo = data.get("logo_uri")
+    logo_uri = logo if isinstance(logo, str) and len(logo) <= MAX_REDIRECT_URI_LENGTH else None
+    client = OAuthClient(client_id, "cimd", name, uris, logo_uri)
     _cimd_cache[client_id] = (client, time.monotonic() + CIMD_CACHE_TTL)
     _cimd_cache.move_to_end(client_id)
     while len(_cimd_cache) > CIMD_CACHE_ENTRIES:
