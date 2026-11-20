@@ -110,7 +110,7 @@ def test_every_url_and_snippet_has_a_copy_button(app_client):
     assert text.count('data-copy="deapi-mcp"') == text.count("<code>deapi-mcp</code>")
     # Every snippet has its own button with the snippet's full text
     assert text.count("<pre>") == text.count("<div class=snippet>")
-    assert 'data-copy="claude mcp add --transport http deapi https://mcp.test/mcp' in text
+    assert 'data-copy="claude mcp add --transport http --scope user deapi https://mcp.test/mcp"' in text
     # Hidden until the script runs, so a page without JavaScript shows no dead buttons
     assert "class=copy-btn hidden data-copy" in text
     assert "class=copy-btn data-copy" not in text

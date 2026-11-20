@@ -31,6 +31,11 @@ releases are git tags `vX.Y.Z`.
 ### Changed
 - The links on the sign-in screen (API keys page, docs, logo) open in a new tab, so
   getting a key never leaves the sign-in under way.
+- The setup page gives each client its choices side by side: the deAPI sign-in window
+  (recommended: the key never goes into a config file) and the key in a header, with the
+  commands for each (`claude mcp add --scope user`, `codex mcp login`, `gemini mcp add`,
+  `/mcp auth`, VS Code's MCP: Add Server). It also says that key management is off on this
+  server, and why.
 
 ## 0.7.3
 

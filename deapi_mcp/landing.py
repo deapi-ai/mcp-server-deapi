@@ -108,6 +108,9 @@ details[open]{padding-bottom:1rem;border-color:#4a4029}
 summary{cursor:pointer;font:600 1rem var(--sans);color:var(--fg);padding:.75rem 0}
 summary::marker{color:var(--amber)}
 .note{color:var(--dim);font-size:.85rem}
+.opt{color:var(--fg);font:600 .95rem var(--sans);margin:1.1rem 0 .3rem}
+.opt span{color:var(--amber);font:500 .72rem var(--mono);margin-left:.5rem;
+text-transform:uppercase;letter-spacing:.06em}
 ol,ul{padding-left:1.4rem}
 li{margin:.3rem 0}
 li::marker{color:var(--amber)}
@@ -247,8 +250,9 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
     url_copy = _copy(mcp_url)
     client_id_copy = _copy(OAUTH_CLIENT_ID)
 
+    claude_code_oauth = f"claude mcp add --transport http --scope user deapi {mcp_url}"
     claude_code = (
-        f"claude mcp add --transport http deapi {mcp_url} \\\n"
+        f"claude mcp add --transport http --scope user deapi {mcp_url} \\\n"
         '  --header "Authorization: Bearer $DEAPI_API_KEY"'
     )
     claude_code_json = (
@@ -261,6 +265,9 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
         "    }\n"
         "  }\n"
         "}"
+    )
+    cursor_oauth_only_json = (
+        "{\n" '  "mcpServers": {\n' f'    "deapi": {{ "url": "{mcp_url}" }}\n' "  }\n" "}"
     )
     cursor_json = (
         "{\n"
@@ -285,6 +292,13 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
         "  }\n"
         "}"
     )
+    vscode_oauth_json = (
+        "{\n"
+        '  "servers": {\n'
+        f'    "deapi": {{ "type": "http", "url": "{mcp_url}" }}\n'
+        "  }\n"
+        "}"
+    )
     vscode_json = (
         "{\n"
         '  "inputs": [\n'
@@ -300,9 +314,11 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
         "  }\n"
         "}"
     )
+    codex_oauth = f"codex mcp add deapi --url {mcp_url}\ncodex mcp login deapi"
     codex_toml = (
         "[mcp_servers.deapi]\n" f'url = "{mcp_url}"\n' 'bearer_token_env_var = "DEAPI_API_KEY"'
     )
+    gemini_oauth = f"gemini mcp add --transport http deapi {mcp_url}"
     gemini_json = (
         "{\n"
         '  "mcpServers": {\n'
@@ -366,69 +382,100 @@ out of config files and shell history.</p>
 
 <h2 id=connect><small>Step 2</small>Connect your client</h2>
 
+<p>Every client below can use the <b>deAPI sign-in window</b>: you paste your key once, in
+a deAPI page, and it never goes into a config file. Clients that take headers can send the
+key directly instead. Pick whichever suits you.</p>
+
 <details open>
 <summary>Claude (claude.ai and Claude Desktop)</summary>
+<p class=opt>Sign-in window <span>recommended</span></p>
 <ol>
 <li>Open <b>Customize → Connectors</b> and choose <b>Add custom connector</b>.</li>
 <li>Name it <code>deAPI</code> and paste the endpoint {url_copy}.</li>
-<li>Click <b>Add</b>, then <b>Connect</b>. A deAPI sign-in window opens: paste your API key
-and choose <b>Allow access</b>.</li>
+<li>Click <b>Add</b>, then <b>Connect</b>, paste your API key and choose <b>Allow access</b>.</li>
 </ol>
-<p class=note>You can also skip the sign-in window: under <b>Advanced settings</b> choose
-<b>Use your own OAuth client</b> with Client ID {client_id_copy} and your API key as
-Client Secret, or, where your plan offers <b>Request headers</b>, add
-<code>Authorization: Bearer &lt;your key&gt;</code>. On Team and Enterprise plans an owner adds
-connectors under Organization settings.</p>
+<p class=opt>Without the window</p>
+<p>Under <b>Advanced settings</b> choose <b>Use your own OAuth client</b>: Client ID
+{client_id_copy}, Client Secret your API key. Or, where your plan offers <b>Request
+headers</b>, add <code>Authorization: Bearer &lt;your key&gt;</code>.</p>
+<p class=note>On Team and Enterprise plans an owner adds connectors under Organization
+settings.</p>
 </details>
 
 <details>
 <summary>ChatGPT</summary>
+<p class=opt>Sign-in window <span>recommended</span></p>
 <ol>
 <li>On chatgpt.com, open <b>Settings → Apps &amp; Connectors → Advanced settings</b> and turn on
 <b>Developer mode</b>.</li>
 <li>Choose <b>Create</b>, name the app <code>deAPI</code> and enter the MCP server URL
 {url_copy}.</li>
-<li>Set <b>Authentication</b> to <b>OAuth</b>. Leave the client fields empty: ChatGPT
-registers itself, and a deAPI sign-in window asks for your API key.</li>
-<li>Confirm and create the app, then enable it in a chat.</li>
+<li>Set <b>Authentication</b> to <b>OAuth</b> and leave the client fields empty. Create the
+app, paste your key in the deAPI window and choose <b>Allow access</b>.</li>
 </ol>
-<p class=note>If ChatGPT asks for client credentials, enter Client ID
-{client_id_copy} and your API key as Client Secret.</p>
+<p class=opt>Without the window</p>
+<p>In the OAuth client fields enter Client ID {client_id_copy} and your API key as Client
+Secret.</p>
 <p class=note>Developer mode depends on your ChatGPT plan and is set up on the web.</p>
 </details>
 
 <details>
 <summary>Claude Code</summary>
+<p class=opt>Sign-in window <span>recommended</span></p>
+{_code(claude_code_oauth)}
+<p>Then run <code>/mcp</code> in Claude Code, pick <b>deapi</b> and choose
+<b>Authenticate</b>: paste your key in the window that opens. <code>--scope user</code> makes
+it available in every project.</p>
+<p class=opt>API key in a header</p>
 {_code(claude_code)}
-<p>Without <code>--header</code>, run <code>/mcp</code> in Claude Code and choose
-<b>Authenticate</b>: the deAPI sign-in window opens in your browser.</p>
-<p>Or share it with a project in <code>.mcp.json</code>:</p>
+<p>Or share it with a project in <code>.mcp.json</code>; Claude Code reads
+<code>DEAPI_API_KEY</code> from the environment:</p>
 {_code(claude_code_json)}
 </details>
 
 <details>
 <summary>Cursor</summary>
-<p>In <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project):</p>
+<p>In <code>~/.cursor/mcp.json</code> (or <code>.cursor/mcp.json</code> in a project).</p>
+<p class=opt>Sign-in window <span>recommended</span></p>
+{_code(cursor_oauth_only_json)}
+<p>Cursor then asks you to log in to the server in its MCP settings; paste your key in the
+deAPI window.</p>
+<p class=opt>API key in a header</p>
 {_code(cursor_json)}
-<p>Or leave out <code>headers</code>: Cursor then opens the deAPI sign-in window, where you
-paste your key. To skip that window with OAuth, use the pre-registered client:</p>
+<p class=opt>OAuth without the window</p>
 {_code(cursor_oauth_json)}
 </details>
 
 <details>
 <summary>VS Code (GitHub Copilot)</summary>
-<p>In <code>.vscode/mcp.json</code>. VS Code asks for the key once and stores it securely:</p>
+<p class=opt>Sign-in window <span>recommended</span></p>
+<p>Run <b>MCP: Add Server</b> from the Command Palette, choose <b>HTTP</b> and paste
+{url_copy}, or put it in <code>.vscode/mcp.json</code>:</p>
+{_code(vscode_oauth_json)}
+<p>When the server first starts, VS Code asks you to sign in; paste your key in the deAPI
+window.</p>
+<p class=opt>API key, asked once</p>
+<p>VS Code prompts for the key and stores it securely:</p>
 {_code(vscode_json)}
 </details>
 
 <details>
 <summary>Codex CLI</summary>
+<p class=opt>Sign-in window <span>recommended</span></p>
+{_code(codex_oauth)}
+<p><code>codex mcp login</code> opens the deAPI window in your browser.</p>
+<p class=opt>API key from an environment variable</p>
 <p>In <code>~/.codex/config.toml</code>. Codex sends the variable's value as a Bearer token:</p>
 {_code(codex_toml)}
 </details>
 
 <details>
 <summary>Gemini CLI</summary>
+<p class=opt>Sign-in window <span>recommended</span></p>
+{_code(gemini_oauth)}
+<p>Then run <code>/mcp auth deapi</code> in Gemini CLI and paste your key in the deAPI
+window.</p>
+<p class=opt>API key in a header</p>
 <p>In <code>~/.gemini/settings.json</code>. Use <code>httpUrl</code>: in Gemini CLI
 <code>url</code> means SSE.</p>
 {_code(gemini_json)}
