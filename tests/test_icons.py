@@ -120,8 +120,54 @@ def test_candidates_are_the_allowed_logo_then_the_favicon():
         "https://cdn.zed.dev/images/logo-dark.png",
         "https://zed.dev/favicon.ico",
     ]
-    foreign = cimd("attacker.example", "https://claude.ai/logo.png")
-    assert client_icons.candidate_urls(foreign) == ["https://attacker.example/favicon.ico"]
+    # A site that is not a well-known client gets no picture at all, not even its favicon:
+    # its owner decides what that favicon shows (Claude's logo, say)
+    foreign = cimd("claude-connect.example", "https://claude-connect.example/logo.png")
+    assert client_icons.candidate_urls(foreign) == []
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["claude-connect.example", "anthropics.github.io", "claude.vercel.app", "evil.co.uk"],
+)
+async def test_unknown_sites_never_get_a_picture(monkeypatch, host):
+    called = []
+
+    async def fetch(url):
+        called.append(url)
+        return "data:image/png;base64,AAAA"
+
+    monkeypatch.setattr(client_icons, "_fetch_image", fetch)
+    assert await client_icons.client_icon(cimd(host)) is None
+    assert called == []
+
+
+async def test_a_bad_port_in_the_logo_still_falls_back_to_the_favicon(monkeypatch):
+    calls = []
+
+    async def fetch(url, **kwargs):
+        calls.append(url)
+        if url.endswith("favicon.ico"):
+            return ICO, "image/x-icon"
+        raise ValueError("Port out of range 0-65535")
+
+    monkeypatch.setattr(client_icons, "_fetch_image", REAL_FETCH_IMAGE)
+    monkeypatch.setattr(client_icons, "safe_fetch", fetch)
+    client = cimd("zed.dev", "https://cdn.zed.dev:99999/logo.png")
+    assert (await client_icons.client_icon(client)).startswith("data:image/x-icon")
+    assert calls[-1] == "https://zed.dev/favicon.ico"
+
+
+async def test_pictures_are_fetched_without_redirects(monkeypatch):
+    seen = {}
+
+    async def fetch(url, **kwargs):
+        seen.update(kwargs)
+        return PNG, "image/png"
+
+    monkeypatch.setattr(client_icons, "safe_fetch", fetch)
+    await REAL_FETCH_IMAGE("https://claude.ai/favicon.ico")
+    assert seen["max_redirects"] == 0
 
 
 @pytest.mark.parametrize(
@@ -171,10 +217,10 @@ async def test_a_self_registered_client_never_gets_a_picture(monkeypatch):
 
 
 def test_sign_in_screen_shows_the_picture_for_a_metadata_client(app_client, api, monkeypatch):
-    client_id = "https://client.example.com/oauth/client.json"
+    client_id = "https://claude.ai/oauth/mcp-oauth-client-metadata"
 
     async def document(url):
-        body = {"client_id": client_id, "client_name": "Client", "redirect_uris": [REDIRECT]}
+        body = {"client_id": client_id, "client_name": "Claude", "redirect_uris": [REDIRECT]}
         return json.dumps(body).encode(), "application/json"
 
     async def picture(url):

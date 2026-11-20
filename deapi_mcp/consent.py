@@ -23,7 +23,6 @@ The key is never logged and never echoed back into the page.
 """
 
 import base64
-import functools
 import hashlib
 import hmac
 import ipaddress
@@ -525,7 +524,11 @@ async def submit_consent(request: Request) -> Response:
         )
 
     signed = raw_request if isinstance(raw_request, str) else ""
-    render = functools.partial(consent_page, icon=await client_icon(client))
+
+    async def render(*args: Any) -> HTMLResponse:
+        # The picture is looked up only when a page is actually drawn
+        return consent_page(*args, icon=await client_icon(client))
+
     ip = _client_ip(request)
     limiter = get_limiter()
     too_many = (
@@ -533,16 +536,18 @@ async def submit_consent(request: Request) -> Response:
         429,
     )
     if await limiter.blocked(ip):
-        return render(client, redirect_uri, signed, csrf_cookie, *too_many)
+        return await render(client, redirect_uri, signed, csrf_cookie, *too_many)
 
     key_value = form.get("api_key")
     api_key = key_value.strip() if isinstance(key_value, str) else ""
     if len(api_key) < 10 or len(api_key) > MAX_KEY_LENGTH:
-        return render(client, redirect_uri, signed, csrf_cookie, "Enter your deAPI API key.", 400)
+        return await render(
+            client, redirect_uri, signed, csrf_cookie, "Enter your deAPI API key.", 400
+        )
 
     # Counted before the check, given back unless deAPI refuses the key
     if not await limiter.attempt(ip):
-        return render(client, redirect_uri, signed, csrf_cookie, *too_many)
+        return await render(client, redirect_uri, signed, csrf_cookie, *too_many)
     status = (
         await get_key_verifier().verify(api_key, sign_in=True)
         if settings.verify_api_keys
@@ -551,7 +556,7 @@ async def submit_consent(request: Request) -> Response:
     if status is not KeyStatus.INVALID:
         await limiter.refund(ip)
     if status is KeyStatus.INVALID:
-        return render(
+        return await render(
             client,
             redirect_uri,
             signed,
@@ -560,7 +565,7 @@ async def submit_consent(request: Request) -> Response:
             400,
         )
     if status is not KeyStatus.VALID:
-        return render(
+        return await render(
             client,
             redirect_uri,
             signed,
@@ -589,7 +594,7 @@ async def submit_consent(request: Request) -> Response:
         logger.error("Authorization code store unavailable during sign-in")
         stored = None
     if not stored:
-        return render(
+        return await render(
             client,
             redirect_uri,
             signed,

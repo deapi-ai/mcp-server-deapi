@@ -3,7 +3,7 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
-## 0.8.0 (unreleased)
+## 0.8.0
 
 ### Added
 - Account and API key tools (`deapi_mcp/tools/account.py`): `get_account`,
@@ -15,13 +15,15 @@ releases are git tags `vX.Y.Z`.
   the dashboard link (marked read-only, so clients do not ask first). On, they act and are
   marked destructive, so clients ask the user before each call. A created key's secret is
   returned once, in the tool result.
-- The sign-in screen shows the application's picture for a client identified by a metadata
+- The sign-in screen shows the application's picture for well-known clients (Claude,
+  ChatGPT, VS Code, GitHub Copilot, Zed, Raycast, Goose, Cursor) identified by their metadata
   document: its `logo_uri` when that is on the client's own site (or a logo host known for
   it, such as ChatGPT's), else the favicon of its host. The server fetches it (public
-  addresses only, 160 kB, 2.5 s), keeps only PNG, ICO, GIF, JPEG or WebP (never SVG), and
-  puts it into the page as a `data:` URI, so the browser loads nothing from elsewhere.
-  Cached a day per client. A self-registered client chose its own name and keeps a letter,
-  so nobody can sign in under someone else's logo.
+  addresses only, no redirects, 160 kB, 1.5 s), keeps only PNG, ICO, GIF, JPEG or WebP
+  (never SVG), and puts it into the page as a `data:` URI, so the browser loads nothing
+  from elsewhere. Cached a day. Every other client, and every self-registered one, keeps a
+  letter: whoever runs a host decides what its favicon shows, so a picture is shown only
+  where it cannot be someone else's.
 - deAPI's icon: served at `/favicon.ico` and `/icon-{32,64,128}.png`, linked from the setup
   page and the sign-in screen, and announced in the MCP `serverInfo` (`icons`, `websiteUrl`)
   for clients that show a connector's picture.

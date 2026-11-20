@@ -1,9 +1,9 @@
-"""The picture of the application on the sign-in screen, for clients whose host is known.
+"""The picture of the application on the sign-in screen, for well-known clients only.
 
-Only a client identified by a metadata document (CIMD) gets one: its host is the one that
-serves the document, so a picture from that host stands for that host. A client that
-registered itself (DCR) chose its own name and gets a letter, so nobody can sign in under
-someone else's logo.
+A picture is a strong cue, and whoever runs a host decides what its favicon shows: a
+metadata document on ``claude-connect.example`` could serve Claude's logo. So only clients
+whose metadata document lives on a site in ``PICTURE_SITES`` (Claude, ChatGPT, VS Code...)
+get their picture; every other client, and every self-registered (DCR) one, gets a letter.
 
 Where the picture comes from, first that works:
 
@@ -11,10 +11,11 @@ Where the picture comes from, first that works:
    ``KNOWN_LOGO_HOSTS`` for that site (ChatGPT's logo lives on oaistatic.com);
 2. ``https://<client host>/favicon.ico``.
 
-The server fetches it with ``safe_fetch`` (public addresses only, 160 kB, 2.5 seconds),
-keeps it only if its bytes are PNG, ICO, GIF, JPEG or WebP (never SVG, which can carry
-script), and puts it into the page as a ``data:`` URI, so the browser loads nothing from
-elsewhere. Results are cached per client: a picture for a day, a miss for an hour.
+The server fetches it with ``safe_fetch`` (public addresses only, no redirects, 160 kB,
+1.5 seconds), keeps it only if its bytes are PNG, ICO, GIF, JPEG or WebP (never SVG, which
+can carry script), and puts it into the page as a ``data:`` URI, so the browser loads
+nothing from elsewhere. Results are cached per host and logo: a picture for a day, a miss
+for an hour.
 """
 
 import asyncio
@@ -31,11 +32,24 @@ from .utils import InputError, safe_fetch
 logger = logging.getLogger(__name__)
 
 MAX_ICON_BYTES = 160 * 1024
-ICON_TIMEOUT_SECONDS = 2.5
+ICON_TIMEOUT_SECONDS = 1.5
 ICON_TTL = 24 * 3600
 MISS_TTL = 3600
-CACHE_ENTRIES = 500
-MAX_CONCURRENT_FETCHES = 8
+CACHE_ENTRIES = 64
+MAX_CONCURRENT_FETCHES = 4
+
+# Sites (the host's last two labels) whose clients get their picture: well-known MCP
+# clients, none of them on a shared public suffix. Anyone else gets a letter.
+PICTURE_SITES = {
+    "claude.ai",
+    "chatgpt.com",
+    "vscode.dev",
+    "github.com",
+    "zed.dev",
+    "raycast.com",
+    "goose-docs.ai",
+    "cursor.com",
+}
 
 # Logo hosts a client's own site uses, beyond its own domain.
 KNOWN_LOGO_HOSTS = {
@@ -77,9 +91,14 @@ def logo_allowed(client_host: str, logo_uri: str) -> bool:
     )
 
 
+def gets_picture(client: OAuthClient) -> bool:
+    host = client.verified_host
+    return client.kind == "cimd" and host is not None and _site(f"https://{host}/") in PICTURE_SITES
+
+
 def candidate_urls(client: OAuthClient) -> list[str]:
     host = client.verified_host
-    if not host:
+    if not host or not gets_picture(client):
         return []
     urls = []
     if client.logo_uri and logo_allowed(host, client.logo_uri):
@@ -102,7 +121,7 @@ async def _fetch_image(url: str) -> Optional[str]:
         max_bytes=MAX_ICON_BYTES,
         timeout=ICON_TIMEOUT_SECONDS,
         total_timeout=ICON_TIMEOUT_SECONDS,
-        max_redirects=2,
+        max_redirects=0,
         schemes=("https",),
         refused_content_types=(),
         accept="image/png,image/x-icon,image/*;q=0.8",
@@ -125,7 +144,7 @@ async def _load(client: OAuthClient) -> Optional[str]:
         for url in candidate_urls(client):
             try:
                 icon = await _fetch_image(url)
-            except (InputError, asyncio.TimeoutError):
+            except (InputError, ValueError, asyncio.TimeoutError):
                 icon = None
             if icon:
                 return icon
@@ -134,9 +153,10 @@ async def _load(client: OAuthClient) -> Optional[str]:
 
 async def client_icon(client: OAuthClient) -> Optional[str]:
     """A ``data:`` URI with the client's picture, or None (the page shows a letter)."""
-    if client.kind != "cimd" or not client.verified_host:
+    if not gets_picture(client):
         return None
-    key = client.client_id
+    # Keyed by what is fetched, not by client_id: many client IDs on one site share a picture
+    key = "|".join(candidate_urls(client))
     cached = _cache.get(key)
     if cached is not None and cached[1] > time.monotonic():
         return cached[0]
