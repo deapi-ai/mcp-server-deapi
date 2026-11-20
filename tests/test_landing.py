@@ -143,3 +143,19 @@ def test_a_host_header_that_is_not_a_plain_host_is_not_used(monkeypatch):
     assert public_base_url(request("[::1]:8000")) == "https://[::1]:8000"
     for bad in ("a.example;id;x", "a.example$(id)", "a.example&x", "a.example'x"):
         assert public_base_url(request(bad)) == PLACEHOLDER_BASE_URL, bad
+
+
+def test_key_management_note_follows_the_switch(monkeypatch):
+    import asyncio
+
+    from deapi_mcp.config import settings
+    from deapi_mcp.server_remote import mcp
+
+    tools = asyncio.run(mcp.list_tools(run_middleware=False))
+    page = render_landing("https://mcp.example.com", tools)
+    assert "Creating, changing and deleting keys is off on this server" in page
+    assert 'href="https://app.deapi.ai/settings/api-keys">API keys page</a>' in page
+    monkeypatch.setattr(settings, "key_management_tools", True)
+    page = render_landing("https://mcp.example.com", tools)
+    assert "Key management is on." in page
+    assert "is off on this server" not in page

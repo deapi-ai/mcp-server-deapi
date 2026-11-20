@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 
 from . import __version__
+from .config import settings
 
 KEYS_URL = "https://app.deapi.ai/settings/api-keys"
 DOCS_URL = "https://docs.deapi.ai/"
@@ -185,6 +186,26 @@ def _code(text: str) -> str:
     return f"<div class=snippet><pre><code>{escape(text)}</code></pre>{_button(text)}</div>"
 
 
+def _key_management_note() -> str:
+    """What the key tools do on this server: DEAPI_KEY_MANAGEMENT_TOOLS, off by default."""
+    if settings.key_management_tools:
+        return (
+            "<p class=note><b>Key management is on.</b> <code>create_api_key</code>, "
+            "<code>update_api_key</code> and <code>delete_api_key</code> change your keys, and "
+            "your client asks you before each change. A new key's secret is shown once, in "
+            "the conversation. They need an ADMIN key.</p>"
+        )
+    return (
+        "<p class=note><b>Creating, changing and deleting keys is off on this server</b>, for "
+        "safety: a new key's secret would pass through the conversation, and a deleted key "
+        "cannot be brought back. <code>create_api_key</code>, <code>update_api_key</code> and "
+        "<code>delete_api_key</code> change nothing and answer with a link to the "
+        f'<a href="{KEYS_URL}">API keys page</a>, where you do it yourself. Reading the '
+        "account and the keys needs an ADMIN key; any key can read its own details and "
+        "usage.</p>"
+    )
+
+
 def _tools_html(tools: Sequence[Any]) -> str:
     """The tool list, grouped by category. Price tools are counted, not listed."""
     generators = [t for t in tools if not t.name.endswith("_price")]
@@ -209,6 +230,8 @@ def _tools_html(tools: Sequence[Any]) -> str:
             for t in members
         )
         parts.append(f"<h3>{escape(title)}</h3><table>{rows}</table>")
+        if key == "account":
+            parts.append(_key_management_note())
     if price_count:
         parts.append(
             f"<p class=note>Plus {price_count} <code>*_price</code> tools that quote "
