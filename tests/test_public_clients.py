@@ -169,7 +169,7 @@ def test_registration_returns_a_public_client(app_client):
         ["data:text/html,x"],
         ["http://client.example.com/cb"],  # plain http only on loopback
         ["https://client.example.com/cb#frag"],
-        ["https://a.example.com/cb"] * 6,
+        ["https://a.example.com/cb"] * 17,
         ["https://client.example.com/" + "x" * 600],
         "https://client.example.com/cb",
     ],
@@ -183,12 +183,11 @@ def test_registration_refuses_bad_redirect_uris(app_client, uris):
 @pytest.mark.parametrize(
     "metadata",
     [
-        {"token_endpoint_auth_method": "client_secret_basic"},
         {"grant_types": ["client_credentials"]},
         {"response_types": ["token"]},
     ],
 )
-def test_registration_refuses_confidential_or_implicit_clients(app_client, metadata):
+def test_registration_refuses_clients_without_the_code_flow(app_client, metadata):
     r = register(app_client, **metadata)
     assert r.status_code == 400
     assert r.json()["error"] == "invalid_client_metadata"
@@ -260,7 +259,8 @@ def test_sign_in_page_for_a_registered_client(app_client, api):
     assert "Unverified application" in page.text
     assert "type=password" in page.text
     csp = page.headers["content-security-policy"]
-    assert "form-action 'self' https://client.example.com" in csp
+    # No form-action: Chromium checks it on every redirect after the POST
+    assert "form-action" not in csp
     assert "frame-ancestors 'none'" in csp and "script-src" not in csp
     assert page.headers["cache-control"] == "no-store"
     cookie = page.headers["set-cookie"].lower()
@@ -279,7 +279,6 @@ def test_loopback_redirect_matches_on_any_port(app_client, api):
     page = authorize(app_client, client_id, "http://127.0.0.1:53682/callback")
     assert page.status_code == 200
     assert "app on this computer" in page.text
-    assert "form-action 'self' http://127.0.0.1:53682" in page.headers["content-security-policy"]
     assert authorize(app_client, client_id, "http://127.0.0.1:53682/other").status_code == 400
 
 
@@ -288,7 +287,6 @@ def test_native_scheme_redirect(app_client, api):
     client_id = dcr_client(app_client, redirect_uris=[uri])
     page = authorize(app_client, client_id, uri)
     assert page.status_code == 200
-    assert "form-action 'self' cursor:" in page.headers["content-security-policy"]
     tokens = sign_in(app_client, client_id, uri)
     assert tokens["access_token"]
 
@@ -876,6 +874,236 @@ CLAUDE_CIMD = {
 }
 
 
+# Published client metadata documents of other clients, as served at their client_id URLs
+CHATGPT_CIMD = {
+    "client_id": "https://chatgpt.com/oauth/client.json",
+    "client_uri": "https://chatgpt.com/",
+    "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+    "token_endpoint_auth_method": "private_key_jwt",
+    "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+    "grant_types": [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+    "response_types": ["code"],
+    "client_name": "ChatGPT",
+    "logo_uri": "https://persistent.oaistatic.com/sonic/misc/openai-logo.png",
+    "token_endpoint_auth_signing_alg": "RS256",
+    "jwks_uri": "https://chatgpt.com/oauth/jwks.json",
+}
+VSCODE_CIMD = {
+    "client_name": "Visual Studio Code",
+    "logo_uri": "https://code.visualstudio.com/assets/branding/code-stable.png",
+    "grant_types": [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+    ],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none",
+    "application_type": "native",
+    "client_id": "https://vscode.dev/oauth/client-metadata.json",
+    "client_uri": "https://vscode.dev/product",
+    "redirect_uris": ["http://127.0.0.1:33418/", "https://vscode.dev/redirect"],
+}
+
+
+@pytest.mark.parametrize(
+    "document, redirect",
+    [
+        (CHATGPT_CIMD, "https://chatgpt.com/connector_platform_oauth_redirect"),
+        (VSCODE_CIMD, "https://vscode.dev/redirect"),
+        (VSCODE_CIMD, "http://127.0.0.1:51234/"),
+    ],
+    ids=["chatgpt", "vscode", "vscode-loopback"],
+)
+async def test_published_client_documents_are_accepted(monkeypatch, document, redirect):
+    oauth_clients.clear_cimd_cache()
+
+    async def fetch(url):
+        return json.dumps(document).encode(), "application/json"
+
+    monkeypatch.setattr(oauth_clients, "_fetch_metadata", fetch)
+    try:
+        client = await oauth_clients.fetch_cimd_client(document["client_id"])
+        assert client is not None
+        assert client.name == document["client_name"]
+        assert client.allows_redirect(redirect)
+    finally:
+        oauth_clients.clear_cimd_cache()
+
+
+async def test_a_metadata_document_that_cannot_be_public_is_refused(monkeypatch):
+    oauth_clients.clear_cimd_cache()
+    document = {
+        **CHATGPT_CIMD,
+        "token_endpoint_auth_methods_supported": ["private_key_jwt"],
+    }
+
+    async def fetch(url):
+        return json.dumps(document).encode(), "application/json"
+
+    monkeypatch.setattr(oauth_clients, "_fetch_metadata", fetch)
+    try:
+        assert await oauth_clients.fetch_cimd_client(document["client_id"]) is None
+    finally:
+        oauth_clients.clear_cimd_cache()
+
+
+@pytest.mark.parametrize(
+    "method", ["client_secret_post", "client_secret_basic", "private_key_jwt", None]
+)
+def test_registration_makes_any_client_public(app_client, api, method):
+    # LibreChat and Open WebUI ask for client_secret_post; RFC 7591 lets the server
+    # register them as public instead, and the response says so
+    metadata = {} if method is None else {"token_endpoint_auth_method": method}
+    r = register(app_client, **metadata)
+    assert r.status_code == 201, r.text
+    assert r.json()["token_endpoint_auth_method"] == "none"
+    assert "client_secret" not in r.json()
+
+
+# Registration bodies of clients that ask for a client secret method
+LIBRECHAT_DCR = {
+    "client_name": "LibreChat MCP Client",
+    "redirect_uris": ["https://chat.example.com/api/mcp/deapi/oauth/callback"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "client_secret_post",
+    "scope": "",
+}
+OPEN_WEBUI_DCR = {
+    "client_name": "Open WebUI",
+    "redirect_uris": ["https://webui.example.com/oauth/clients/deapi/callback"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "client_secret_post",
+}
+
+
+@pytest.mark.parametrize("body", [LIBRECHAT_DCR, OPEN_WEBUI_DCR], ids=["librechat", "openwebui"])
+def test_secret_asking_clients_complete_the_flow(app_client, api, body):
+    r = app_client.post("/register", json=body)
+    assert r.status_code == 201, r.text
+    client_id = r.json()["client_id"]
+    redirect = body["redirect_uris"][0]
+    done = submit(app_client, authorize(app_client, client_id, redirect))
+    code = location_query(done)["code"]
+    # Open WebUI (authlib) sends an empty client_secret
+    tokens = app_client.post(
+        "/token",
+        data={
+            "grant_type": "authorization_code",
+            "client_id": client_id,
+            "client_secret": "",
+            "code": code,
+            "code_verifier": VERIFIER,
+            "redirect_uri": redirect,
+        },
+    )
+    assert tokens.status_code == 200, tokens.text
+    assert mcp(app_client, tokens.json()["access_token"]).status_code == 200
+
+
+def test_many_redirect_uris_are_accepted(app_client, api):
+    # The Gemini app registers six, Raycast's document lists eight
+    uris = [f"https://oauth-redirect{i}.example.com/callback" for i in range(8)]
+    assert register(app_client, redirect_uris=uris).status_code == 201
+
+
+def test_raycast_scheme_is_a_known_native_scheme():
+    assert oauth_clients.valid_redirect_uri("raycast://mcp-oauth-callback")
+
+
+def test_loopback_query_and_empty_path_do_not_matter(app_client, api):
+    # Continue registers http://localhost:3000/?state=<uuid>, then sends http://localhost:3000
+    client_id = dcr_client(app_client, redirect_uris=["http://localhost:3000/?state=abc"])
+    assert authorize(app_client, client_id, "http://localhost:3000").status_code == 200
+    assert authorize(app_client, client_id, "http://localhost:3000/other").status_code == 400
+
+
+def test_a_non_loopback_redirect_still_matches_exactly():
+    assert not oauth_clients.redirect_matches(
+        "https://client.example.com/cb?x=1", "https://client.example.com/cb"
+    )
+
+
+@pytest.mark.parametrize(
+    "name, shown",
+    [
+        ("Claude Code (deapi)", "Claude Code (deapi)"),
+        ("deAPI", "Unnamed application"),
+        ("deAPI (official)", "Unnamed application"),
+        ("Sign in to deAPI", "Unnamed application"),
+    ],
+)
+def test_a_trailing_server_name_may_mention_deapi(name, shown):
+    assert oauth_clients._clean_name(name, "Unnamed application") == shown
+
+
+def test_cors_preflight_and_headers_on_oauth_endpoints(app_client):
+    pre = app_client.options(
+        "/token",
+        headers={
+            "Origin": "http://localhost:6274",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert pre.status_code == 204
+    assert pre.headers["access-control-allow-origin"] == "*"
+    assert "POST" in pre.headers["access-control-allow-methods"]
+    meta = app_client.get("/.well-known/oauth-authorization-server")
+    assert meta.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in meta.headers
+    # The sign-in page and the MCP endpoint get no CORS from this
+    assert "access-control-allow-origin" not in app_client.get("/authorize").headers
+    assert "access-control-allow-origin" not in app_client.get("/").headers
+
+
+def test_basic_with_an_unencoded_https_client_id():
+    client_id = "https://client.example.com/client.json"
+    raw = base64.b64encode(f"{client_id}:".encode()).decode()
+
+    import deapi_mcp.oauth_endpoints as endpoints
+
+    request = type("R", (), {"headers": {"authorization": f"Basic {raw}"}})()
+    assert endpoints._basic_credentials(request) == (client_id, "")
+
+
+def test_a_client_assertion_names_the_client_when_client_id_is_missing():
+    import jwt
+
+    import deapi_mcp.oauth_endpoints as endpoints
+
+    assertion = jwt.encode(
+        {"iss": CHATGPT_CIMD["client_id"], "sub": CHATGPT_CIMD["client_id"]}, "k" * 32
+    )
+    form = {
+        "client_assertion_type": endpoints.JWT_BEARER_ASSERTION,
+        "client_assertion": assertion,
+    }
+    assert endpoints._assertion_client_id(form) == CHATGPT_CIMD["client_id"]
+    form["client_assertion"] = jwt.encode({"sub": "deapi-mcp"}, "k" * 32)
+    assert endpoints._assertion_client_id(form) is None
+    assert endpoints._assertion_client_id({"client_assertion": "garbage"}) is None
+
+
+def test_x_api_key_with_an_empty_authorization_header(app_client, api):
+    r = app_client.post(
+        "/mcp",
+        headers={
+            "Authorization": "",
+            "X-API-Key": GOOD,
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        },
+        json=INITIALIZE,
+    )
+    assert r.status_code == 200
+
+
 async def test_claudes_metadata_document_is_accepted(monkeypatch):
     oauth_clients.clear_cimd_cache()
 
@@ -925,3 +1153,43 @@ async def test_redis_limiter_sets_the_window_atomically():
     assert 0 < await limiter._redis.ttl(key) <= consent.KEY_FAILURE_WINDOW
     assert await limiter.blocked("198.51.100.1")
     assert not await limiter.blocked("198.51.100.2")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "(deAPI)",
+        "de(API)",
+        "deA(PI)",
+        "DEAP(I)",
+        "Official sign-in (deAPI)x",
+        "Sign-in (deAPI official)",
+        "(deAPI MCP - official login)",
+        " (deapi)",
+    ],
+)
+def test_a_parenthesis_cannot_smuggle_deapi_into_a_name(name):
+    assert oauth_clients._clean_name(name, "Unnamed application") == "Unnamed application"
+
+
+def test_a_loopback_redirect_cannot_carry_a_query_of_its_own():
+    registered = "http://localhost:3000/cb"
+    injected = "http://localhost:4444/cb?code=INJECTED&iss=https://evil.example"
+    assert not oauth_clients.redirect_matches(registered, injected)
+    assert not oauth_clients.redirect_matches(registered, "http://localhost:4444/cb?x=1#")
+    # The registered query, or none at all, still matches
+    assert oauth_clients.redirect_matches(
+        "http://localhost:3000/?state=abc", "http://localhost:9/?state=abc"
+    )
+
+
+def test_a_bare_trailing_hash_is_refused():
+    assert not oauth_clients.valid_redirect_uri("http://localhost:4444/cb#")
+    assert not oauth_clients.valid_redirect_uri("https://client.example.com/cb#")
+
+
+def test_redirect_uris_are_bounded_in_total(app_client):
+    uris = [f"https://client.example.com/{i}/" + "x" * 400 for i in range(6)]
+    r = register(app_client, redirect_uris=uris)
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_redirect_uri"

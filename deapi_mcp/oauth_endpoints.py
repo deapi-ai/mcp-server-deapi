@@ -420,6 +420,31 @@ def _form_str(form: FormData, key: str) -> Optional[str]:
     return value if isinstance(value, str) else None
 
 
+JWT_BEARER_ASSERTION = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+
+
+def _assertion_client_id(form: Any) -> Optional[str]:
+    """The public client named by a ``private_key_jwt`` assertion sent without client_id.
+
+    Nothing here trusts the assertion: it only names the client, as ``client_id`` would,
+    and a public client is bound by PKCE and its redirect, not by this signature. A name
+    that is not a public client ID is ignored.
+    """
+    if _form_str(form, "client_assertion_type") != JWT_BEARER_ASSERTION:
+        return None
+    assertion = _form_str(form, "client_assertion")
+    if not assertion or len(assertion) > 8192:
+        return None
+    try:
+        claims = jwt.decode(assertion, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None
+    subject = claims.get("sub") if isinstance(claims, dict) else None
+    if isinstance(subject, str) and looks_like_public_client_id(subject):
+        return subject
+    return None
+
+
 def _basic_credentials(request: Request) -> Optional[tuple[str, str]]:
     """The client_id and client_secret from an ``Authorization: Basic`` header.
 
@@ -435,7 +460,10 @@ def _basic_credentials(request: Request) -> Optional[tuple[str, str]]:
         decoded = base64.b64decode(value.strip(), validate=True).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError) as exc:
         raise ValueError("malformed Basic credentials") from exc
-    client_id, sep, client_secret = decoded.partition(":")
+    # An https client_id sent without the encoding step holds ':' itself; the secret
+    # is what follows the last one
+    split = decoded.rpartition if decoded.startswith("https://") else decoded.partition
+    client_id, sep, client_secret = split(":")
     if not sep:
         raise ValueError("malformed Basic credentials")
     # unquote, not unquote_plus: a client that skips the encoding step must not have a
@@ -494,7 +522,7 @@ async def _token_response(request: Request) -> JSONResponse:
     # Parse form data
     form_data = await request.form()
     grant_type = _form_str(form_data, "grant_type")
-    client_id = _form_str(form_data, "client_id")
+    client_id = _form_str(form_data, "client_id") or _assertion_client_id(form_data)
     client_secret = _form_str(form_data, "client_secret")
     try:
         basic = _basic_credentials(request)

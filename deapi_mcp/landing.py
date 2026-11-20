@@ -1,9 +1,10 @@
 """The page served at ``GET /``: how to connect an MCP client to this server.
 
-One static HTML document: inline CSS, no script, no external resource, so a strict
-Content-Security-Policy holds (the stylesheet is allowed by its hash, nothing else
-loads). Client sections are ``<details>`` blocks, which open and close without
-JavaScript. The endpoint URL comes from ``PUBLIC_BASE_URL`` (or the request), and
+One static HTML document: inline CSS, one small inline script, no external resource,
+so a strict Content-Security-Policy holds (the stylesheet and the script are allowed by
+their hashes, nothing else loads or runs). The script only adds copy buttons: they stay
+hidden without it, and every value can still be selected with one click. Client sections
+are ``<details>`` blocks, which open and close without JavaScript. The endpoint URL comes from ``PUBLIC_BASE_URL`` (or the request), and
 the tool list from the server's own registry, so the page never drifts from what
 the server actually serves.
 """
@@ -11,6 +12,7 @@ the server actually serves.
 import base64
 import hashlib
 import os
+import re
 from html import escape
 from typing import Any, Optional, Sequence
 
@@ -86,6 +88,18 @@ pre{background:var(--bg-deep);border:1px solid var(--line-soft);border-radius:8p
 padding:.9rem 1rem;overflow-x:auto;margin:.6rem 0}
 pre code{background:none;padding:0;user-select:all;overflow-wrap:normal;color:#e9e4d6}
 .endpoint code,td code{user-select:all}
+.copy{display:inline-flex;align-items:center;gap:.4rem;max-width:100%;vertical-align:middle}
+.copy-btn{font:600 .72rem/1 var(--mono);color:var(--amber);background:transparent;
+border:1px solid var(--line);border-radius:4px;padding:.3rem .55rem;cursor:pointer;
+white-space:nowrap;flex:none}
+.copy-btn:hover{border-color:var(--amber)}
+.copy-btn:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.copy-btn.done{background:var(--amber);border-color:var(--amber);color:#11100d}
+.snippet{position:relative}
+.snippet pre{padding-right:5rem}
+.snippet .copy-btn{position:absolute;top:.5rem;right:.5rem;background:var(--bg-deep)}
+.snippet .copy-btn.done{background:var(--amber)}
+.endpoint .copy{display:flex;justify-content:space-between;gap:1rem}
 details{background:var(--card);border:1px solid var(--line);border-radius:8px;
 padding:.2rem 1.25rem;margin:.6rem 0}
 details[open]{padding-bottom:1rem;border-color:#4a4029}
@@ -113,12 +127,24 @@ footer a:hover{color:var(--amber)}
 footer .version{margin-left:auto}
 """
 
+# Shows the copy buttons and copies a button's data-copy value. Nothing else.
+SCRIPT = (
+    "document.querySelectorAll('button[data-copy]').forEach(function(b){b.hidden=false;"
+    "b.addEventListener('click',function(){var label=b.textContent;"
+    "navigator.clipboard.writeText(b.getAttribute('data-copy')).then(function(){"
+    "b.textContent='Copied';b.classList.add('done');setTimeout(function(){"
+    "b.textContent=label;b.classList.remove('done')},1500)},function(){"
+    "b.textContent='Press Ctrl+C'})})})"
+)
+
 _STYLE_HASH = base64.b64encode(hashlib.sha256(CSS.encode()).digest()).decode()
+_SCRIPT_HASH = base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
 
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'none'; "
         f"style-src 'sha256-{_STYLE_HASH}'; "
+        f"script-src 'sha256-{_SCRIPT_HASH}'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
@@ -140,8 +166,21 @@ def _tool_category(tool: Any) -> str:
     return module.rsplit(".", 1)[-1]
 
 
+def _button(value: str, label: str = "Copy") -> str:
+    """A copy button for ``value``; hidden until the page script shows it."""
+    return (
+        f'<button type=button class=copy-btn hidden data-copy="{escape(value)}" '
+        f'aria-label="{escape(label)}: {escape(value)}">Copy</button>'
+    )
+
+
+def _copy(value: str) -> str:
+    """An inline value with a copy button next to it."""
+    return f"<span class=copy><code>{escape(value)}</code>{_button(value)}</span>"
+
+
 def _code(text: str) -> str:
-    return f"<pre><code>{escape(text)}</code></pre>"
+    return f"<div class=snippet><pre><code>{escape(text)}</code></pre>{_button(text)}</div>"
 
 
 def _tools_html(tools: Sequence[Any]) -> str:
@@ -180,7 +219,8 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
     """The whole page for a server reachable at ``base_url``."""
     base = base_url.rstrip("/")
     mcp_url = f"{base}/mcp"
-    e_url = escape(mcp_url)
+    url_copy = _copy(mcp_url)
+    client_id_copy = _copy(OAUTH_CLIENT_ID)
 
     claude_code = (
         f"claude mcp add --transport http deapi {mcp_url} \\\n"
@@ -287,7 +327,7 @@ href="#tools">See the tools</a></div>
 
 <div class=endpoint>
 <p class=label>MCP endpoint · Streamable HTTP</p>
-<code>{e_url}</code>
+{url_copy}
 </div>
 <p class=note>This server speaks Streamable HTTP only. There is no SSE endpoint; a client
 that can only use SSE needs an update.</p>
@@ -304,12 +344,12 @@ out of config files and shell history.</p>
 <summary>Claude (claude.ai and Claude Desktop)</summary>
 <ol>
 <li>Open <b>Customize → Connectors</b> and choose <b>Add custom connector</b>.</li>
-<li>Name it <code>deAPI</code> and paste the endpoint <code>{e_url}</code>.</li>
+<li>Name it <code>deAPI</code> and paste the endpoint {url_copy}.</li>
 <li>Click <b>Add</b>, then <b>Connect</b>. A deAPI sign-in window opens: paste your API key
 and choose <b>Allow access</b>.</li>
 </ol>
 <p class=note>You can also skip the sign-in window: under <b>Advanced settings</b> choose
-<b>Use your own OAuth client</b> with Client ID <code>{OAUTH_CLIENT_ID}</code> and your API key as
+<b>Use your own OAuth client</b> with Client ID {client_id_copy} and your API key as
 Client Secret, or, where your plan offers <b>Request headers</b>, add
 <code>Authorization: Bearer &lt;your key&gt;</code>. On Team and Enterprise plans an owner adds
 connectors under Organization settings.</p>
@@ -321,13 +361,13 @@ connectors under Organization settings.</p>
 <li>On chatgpt.com, open <b>Settings → Apps &amp; Connectors → Advanced settings</b> and turn on
 <b>Developer mode</b>.</li>
 <li>Choose <b>Create</b>, name the app <code>deAPI</code> and enter the MCP server URL
-<code>{e_url}</code>.</li>
+{url_copy}.</li>
 <li>Set <b>Authentication</b> to <b>OAuth</b>. Leave the client fields empty: ChatGPT
 registers itself, and a deAPI sign-in window asks for your API key.</li>
 <li>Confirm and create the app, then enable it in a chat.</li>
 </ol>
 <p class=note>If ChatGPT asks for client credentials, enter Client ID
-<code>{OAUTH_CLIENT_ID}</code> and your API key as Client Secret.</p>
+{client_id_copy} and your API key as Client Secret.</p>
 <p class=note>Developer mode depends on your ChatGPT plan and is set up on the web.</p>
 </details>
 
@@ -371,16 +411,16 @@ paste your key. To skip that window with OAuth, use the pre-registered client:</
 
 <details>
 <summary>Any other MCP client</summary>
-<p>Use the endpoint <code>{e_url}</code> with transport Streamable HTTP (sometimes called
+<p>Use the endpoint {url_copy} with transport Streamable HTTP (sometimes called
 just "HTTP") and send your key in one of these headers:</p>
 <ul>
-<li><code>Authorization: Bearer &lt;your key&gt;</code></li>
-<li><code>X-API-Key: &lt;your key&gt;</code></li>
+<li>{_copy("Authorization: Bearer <your key>")}</li>
+<li>{_copy("X-API-Key: <your key>")}</li>
 </ul>
 <p>A client that uses OAuth needs no setup: it registers itself (dynamic client
 registration or a client ID metadata document) and opens the deAPI sign-in window, where you
 paste your API key. A client with fixed OAuth credentials can use Client ID
-<code>{OAUTH_CLIENT_ID}</code> with your API key as Client Secret. Both use the Authorization
+{client_id_copy} with your API key as Client Secret. Both use the Authorization
 Code flow with PKCE (S256).</p>
 </details>
 
@@ -417,14 +457,31 @@ href="{SECURITY_URL}">Security</a>
 <span class=version>MCP Server {escape(__version__)}</span>
 </footer>
 </main>
+<script>{SCRIPT}</script>
 </body>
 </html>
 """
 
 
+# A host[:port] as DNS or an IP literal writes it. The page puts the URL into shell commands
+# that people copy, so a Host header with anything else (";", "$", "&"...) is not used.
+_PLAIN_NETLOC = re.compile(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?")
+PLACEHOLDER_BASE_URL = "https://your-mcp-server.example.com"
+
+
 def public_base_url(request: Request) -> str:
-    """The URL clients reach this server on: PUBLIC_BASE_URL, else the request's own."""
-    return os.getenv("PUBLIC_BASE_URL") or f"{request.url.scheme}://{request.url.netloc}"
+    """The URL clients reach this server on: PUBLIC_BASE_URL, else the request's own.
+
+    Set PUBLIC_BASE_URL in production. Without it the request's Host is used, and only
+    when it is a plain host[:port]; otherwise the page shows a placeholder.
+    """
+    configured = os.getenv("PUBLIC_BASE_URL")
+    if configured:
+        return configured
+    scheme, netloc = request.url.scheme, request.url.netloc
+    if scheme in ("http", "https") and _PLAIN_NETLOC.fullmatch(netloc):
+        return f"{scheme}://{netloc}"
+    return PLACEHOLDER_BASE_URL
 
 
 def landing_response(base_url: str, tools: Sequence[Any]) -> Response:

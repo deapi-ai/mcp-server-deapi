@@ -21,6 +21,7 @@ from .fastmcp_auth import (
     ApiKeyHeaderMiddleware,
     DeapiAuthProvider,
     InvalidTokenDescriptionMiddleware,
+    OAuthCorsMiddleware,
 )
 
 # Import tool functions
@@ -368,6 +369,7 @@ def create_app(
     # Added last, so it is the outermost layer: authentication and any overlay
     # middleware (a missing-token counter) see the key as a Bearer token.
     starlette_app.add_middleware(InvalidTokenDescriptionMiddleware)
+    starlette_app.add_middleware(OAuthCorsMiddleware)
     starlette_app.add_middleware(ApiKeyHeaderMiddleware)
 
     logger.info(f"MCP endpoint: http://{host}:{port}/mcp")
@@ -400,7 +402,8 @@ def main() -> None:
     starlette_app = build_app()
 
     # Configure and run uvicorn
-    # proxy_headers=True: Trust X-Forwarded-Proto, X-Forwarded-Host from ingress/proxy
+    # proxy_headers=True: Trust X-Forwarded-Proto and X-Forwarded-For from ingress/proxy
+    # (uvicorn does not read X-Forwarded-Host; set PUBLIC_BASE_URL for the public URL)
     # forwarded_allow_ips="*": Accept forwarded headers from any IP.
     #   IMPORTANT: Only safe when the server is behind a reverse proxy (nginx, ingress, etc.)
     #   that is the sole entry point. If the server is directly exposed to the internet,

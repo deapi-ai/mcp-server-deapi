@@ -3,6 +3,48 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.7.3
+
+Connecting from more clients. Each popular MCP client's own registration or metadata
+document, and the requests it sends, was run through the whole sign-in flow; these are the
+fixes that run turned up.
+
+### Fixed
+- ChatGPT can connect with the sign-in window. Its client metadata document prefers
+  `private_key_jwt` and lists `none` among its supported methods; a document is now
+  accepted when it allows `none` either way. A token request that carries only a
+  `private_key_jwt` assertion and no `client_id` is matched to the client named in the
+  assertion (not verified: PKCE and the redirect bind the code).
+- Dynamic registration accepts any requested token endpoint auth method and registers the
+  client as public (`none`), which the response says (RFC 7591 §3.2.1). LibreChat and Open
+  WebUI ask for `client_secret_post` and were refused.
+- Up to 16 redirect URIs per client (was 5), 2,048 characters in all: the Gemini app
+  registers six, Raycast lists eight. `raycast:` is a known native scheme.
+- VS Code in remote or web mode (and any client whose callback redirects again, such as a
+  desktop deep link) could not finish the sign-in in Chromium browsers: the sign-in page's
+  CSP `form-action` was applied to the second redirect too. The page no longer sets
+  `form-action`; it still loads nothing and runs no script.
+- A loopback redirect may leave out its registered query and takes an empty path as `/`
+  (Continue registers `http://localhost:3000/?state=...` and then sends
+  `http://localhost:3000`). A query that is sent must be the registered one, and a `#`
+  anywhere in a redirect URI is refused, so no `code` of someone else's can be slipped in.
+- CORS on the discovery documents, `/register` and `/token` (any origin, no credentials),
+  for clients that run in a browser such as MCP Inspector.
+- A client name may end with exactly `(deapi)` or `(deapi mcp)` after its own name, so
+  `Claude Code (deapi)` keeps its name instead of becoming "Unnamed application". Any other
+  mention of deAPI still replaces the name.
+- `Authorization: Basic` with an `https` client ID that was not URL-encoded is read
+  correctly; an empty `Authorization` header no longer hides an `X-API-Key`.
+
+- Without `PUBLIC_BASE_URL`, the setup page uses the request's Host only when it is a plain
+  host and port; otherwise it shows a placeholder, so no `;` or `$(...)` can end up in the
+  commands people copy from it. Set `PUBLIC_BASE_URL` in production.
+
+### Added
+- The setup page has copy buttons for the endpoint, the client ID, the headers and every
+  snippet. One small inline script, allowed by its hash in the CSP, shows them; without
+  JavaScript they stay hidden and each value is still selected with one click.
+
 ## 0.7.2
 
 ### Fixed
