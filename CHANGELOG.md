@@ -3,6 +3,12 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.7.4
+
+### Changed
+- The links on the sign-in screen (API keys page, docs, logo) open in a new tab, so
+  getting a key never leaves the sign-in under way.
+
 ## 0.7.3
 
 Connecting from more clients. Each popular MCP client's own registration or metadata

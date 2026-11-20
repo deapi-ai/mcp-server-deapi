@@ -1193,3 +1193,12 @@ def test_redirect_uris_are_bounded_in_total(app_client):
     r = register(app_client, redirect_uris=uris)
     assert r.status_code == 400
     assert r.json()["error"] == "invalid_redirect_uri"
+
+
+def test_sign_in_page_links_open_in_a_new_tab(app_client, api):
+    page = authorize(app_client, dcr_client(app_client)).text
+    links = re.findall(r"<a [^>]*>", page)
+    assert links
+    for link in links:
+        assert 'target=_blank rel="noopener noreferrer"' in link, link
+    assert 'href="https://app.deapi.ai/settings/api-keys" target=_blank' in page

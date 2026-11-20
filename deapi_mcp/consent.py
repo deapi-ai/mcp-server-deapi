@@ -253,6 +253,10 @@ def reset_limiter(limiter: Optional[KeyFailureLimiter] = None) -> None:
 
 # --- pages ------------------------------------------------------------------------------------
 
+# Links on these pages open in a new tab, so following one never leaves the sign-in under
+# way. noopener and noreferrer: the new page gets no handle on this one and no referrer.
+NEW_TAB = 'target=_blank rel="noopener noreferrer"'
+
 
 def _headers() -> dict[str, str]:
     # No form-action: Chromium applies it to every redirect that follows the form's POST,
@@ -288,7 +292,7 @@ def _page(title: str, body: str) -> str:
 <body>
 <div class=bar></div>
 <header>
-<a class=home href="{HOME_URL}">{LOGO_SVG}</a>
+<a class=home href="{HOME_URL}" {NEW_TAB}>{LOGO_SVG}</a>
 <span class=pill>MCP SERVER</span>
 </header>
 <main class=signin>
@@ -304,7 +308,7 @@ def error_page(message: str, status_code: int = 400) -> HTMLResponse:
 <h1>Cannot connect</h1>
 <div class=error>{escape(message)}</div>
 <p class=hint>Start the connection again from your application. If this keeps happening,
-see the <a href="{MCP_DOCS_URL}">MCP server docs</a>.</p>
+see the <a href="{MCP_DOCS_URL}" {NEW_TAB}>MCP server docs</a>.</p>
 </div>"""
     return HTMLResponse(
         _page("Cannot connect to deAPI", body), status_code=status_code, headers=_headers()
@@ -394,7 +398,7 @@ def consent_page(
 <label for=api_key>deAPI API key</label>
 <input id=api_key name=api_key type=password autocomplete=off spellcheck=false
 required maxlength={MAX_KEY_LENGTH} placeholder="sk-dp-...">
-<p class=hint>Create or copy a key at <a href="{KEYS_URL}">app.deapi.ai/settings/api-keys</a>.
+<p class=hint>Create or copy a key at <a href="{KEYS_URL}" {NEW_TAB}>app.deapi.ai/settings/api-keys</a>.
 Consider a separate key for each app, so you can revoke one without the others.</p>
 <div class=actions><button type=submit name=action value=deny formnovalidate>Cancel</button><button
 type=submit name=action value=allow class=solid>Allow access</button></div>
