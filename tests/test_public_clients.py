@@ -876,6 +876,75 @@ CLAUDE_CIMD = {
 }
 
 
+# Published client metadata documents of other clients, as served at their client_id URLs
+CHATGPT_CIMD = {
+    "client_id": "https://chatgpt.com/oauth/client.json",
+    "client_uri": "https://chatgpt.com/",
+    "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+    "token_endpoint_auth_method": "private_key_jwt",
+    "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+    "grant_types": [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+    "response_types": ["code"],
+    "client_name": "ChatGPT",
+    "logo_uri": "https://persistent.oaistatic.com/sonic/misc/openai-logo.png",
+    "token_endpoint_auth_signing_alg": "RS256",
+    "jwks_uri": "https://chatgpt.com/oauth/jwks.json",
+}
+VSCODE_CIMD = {
+    "client_name": "Visual Studio Code",
+    "logo_uri": "https://code.visualstudio.com/assets/branding/code-stable.png",
+    "grant_types": [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+    ],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none",
+    "application_type": "native",
+    "client_id": "https://vscode.dev/oauth/client-metadata.json",
+    "client_uri": "https://vscode.dev/product",
+    "redirect_uris": ["http://127.0.0.1:33418/", "https://vscode.dev/redirect"],
+}
+
+
+@pytest.mark.parametrize(
+    "document, redirect",
+    [
+        (CHATGPT_CIMD, "https://chatgpt.com/connector_platform_oauth_redirect"),
+        (VSCODE_CIMD, "https://vscode.dev/redirect"),
+        (VSCODE_CIMD, "http://127.0.0.1:51234/"),
+    ],
+    ids=["chatgpt", "vscode", "vscode-loopback"],
+)
+async def test_published_client_documents_are_accepted(monkeypatch, document, redirect):
+    oauth_clients.clear_cimd_cache()
+
+    async def fetch(url):
+        return json.dumps(document).encode(), "application/json"
+
+    monkeypatch.setattr(oauth_clients, "_fetch_metadata", fetch)
+    try:
+        client = await oauth_clients.fetch_cimd_client(document["client_id"])
+        assert client is not None
+        assert client.name == document["client_name"]
+        assert client.allows_redirect(redirect)
+    finally:
+        oauth_clients.clear_cimd_cache()
+
+
+def test_a_client_that_cannot_be_public_is_refused(app_client, api):
+    r = register(
+        app_client,
+        token_endpoint_auth_method="private_key_jwt",
+        token_endpoint_auth_methods_supported=["private_key_jwt"],
+    )
+    assert r.status_code == 400
+
+
 async def test_claudes_metadata_document_is_accepted(monkeypatch):
     oauth_clients.clear_cimd_cache()
 

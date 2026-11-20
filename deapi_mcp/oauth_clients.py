@@ -234,8 +234,12 @@ def _validated_metadata(data: Any) -> tuple[str, tuple[str, ...]]:
             f"redirect_uris must list 1-{MAX_REDIRECT_URIS} https, loopback http or "
             "native-app URIs without fragments"
         )
+    # Every client here is public (PKCE, no secret). One that prefers another method but
+    # lists "none" among those it supports (ChatGPT: private_key_jwt, or none) uses "none"
+    # with this server, which offers no other method to such clients.
     method = data.get("token_endpoint_auth_method", "none")
-    if method != "none":
+    supported = data.get("token_endpoint_auth_methods_supported")
+    if method != "none" and not (isinstance(supported, list) and "none" in supported):
         raise ValueError("token_endpoint_auth_method must be none (public client with PKCE)")
     # Only authorization_code (and refresh_token) are ever honoured; any other grant a client
     # lists is ignored, not refused. Claude's own metadata document lists a JWT-bearer grant
