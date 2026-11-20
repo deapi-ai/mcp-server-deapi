@@ -6,6 +6,15 @@ releases are git tags `vX.Y.Z`.
 ## 0.8.0 (unreleased)
 
 ### Added
+- Account and API key tools (`deapi_mcp/tools/account.py`): `get_account`,
+  `get_account_usage`, `list_payments`, `list_api_keys`, `get_api_key` and
+  `get_api_key_usage` read, marked read-only. They need an ADMIN key, except a key's own
+  details and usage; an API-role key gets a message with the dashboard link.
+- `create_api_key`, `update_api_key` and `delete_api_key`, behind
+  `DEAPI_KEY_MANAGEMENT_TOOLS` (default `false`). Off, they change nothing and answer with
+  the dashboard link (marked read-only, so clients do not ask first). On, they act and are
+  marked destructive, so clients ask the user before each call. A created key's secret is
+  returned once, in the tool result.
 - The sign-in screen shows the application's picture for a client identified by a metadata
   document: its `logo_uri` when that is on the client's own site (or a logo host known for
   it, such as ChatGPT's), else the favicon of its host. The server fetches it (public

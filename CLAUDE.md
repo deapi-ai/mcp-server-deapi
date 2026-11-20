@@ -67,6 +67,7 @@ Tools are organized by category:
 - `video.py` - Video generation, image-to-video, audio-to-video, description, upscale (10 tools)
 - `embedding.py` - Text embeddings (2 tools)
 - `utility.py` - Balance, models, job status (3 tools)
+- `account.py` - Account, usage, payments and API keys (9 tools). The three that create, change and delete keys act only with `DEAPI_KEY_MANAGEMENT_TOOLS=true` (then annotated destructive); off, they return the dashboard link and change nothing
 - `prompt.py` - Prompt enhancement tools (2 tools, registered in `server_remote.py`)
 - `_price_helpers.py` - Resolves unset parameters from the model card, for price and generation tools alike
 
@@ -113,6 +114,9 @@ DEAPI_MAX_UPLOAD_MB=75
 
 # Check plain API keys against deAPI at connect (deapi_mcp/key_verifier.py)
 DEAPI_VERIFY_API_KEYS=true
+
+# Let MCP create, change and delete API keys (off: those tools return the dashboard link)
+DEAPI_KEY_MANAGEMENT_TOOLS=false
 
 # OAuth for self-registering clients: DCR, CIMD and the sign-in screen (deapi_mcp/consent.py)
 DEAPI_OAUTH_PUBLIC_CLIENTS=true

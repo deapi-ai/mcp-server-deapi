@@ -99,6 +99,15 @@ class Settings(BaseSettings):
         description="Most media one tool call uploads, in MB (all its files together)",
     )
 
+    # Creating, changing and deleting API keys from MCP (deapi_mcp/tools/account.py). Off,
+    # those three tools change nothing and answer with the dashboard link; reading the
+    # account and the keys works either way. A created key's secret passes through the
+    # conversation, so turn this on only where that is acceptable.
+    key_management_tools: bool = Field(
+        default=False,
+        description="Let MCP tools create, change and delete API keys (needs an ADMIN key)",
+    )
+
     # Plain API key check (deapi_mcp/key_verifier.py). A key sent as a bearer token
     # or as the OAuth client_secret is checked once against the API (cached), so a
     # wrong key is refused with 401 at connect instead of failing every tool call.

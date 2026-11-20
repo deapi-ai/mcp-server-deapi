@@ -69,6 +69,16 @@ Production-ready Model Context Protocol (MCP) server for the [deAPI](https://dea
 - `get_available_models` - List available AI models with specifications
 - `check_job_status` - Query async job status by ID; with `wait_seconds` it waits for the job and returns the finished result in the original tool's shape. A failed job reports `success: false` with `error_reason`, `error_code`, `retryable` and `refunded`
 
+### Account and API Key Tools
+Reading needs an ADMIN key, except the key's own details and usage, which any key can read.
+An API-role key gets a clear message with the dashboard link instead of a bare 403.
+- `get_account` - Balance, currency and auto top-up settings
+- `get_account_usage` - Cost, requests and errors of the whole account over a window, by day, hour, type, model or key
+- `list_payments` - Balance top-ups
+- `list_api_keys` - The account's keys: role, status, expiry, spend limit and its use, IP allowlist (never secrets)
+- `get_api_key` / `get_api_key_usage` - One key's details or usage; without `key_id`, the key this connection uses
+- `create_api_key` / `update_api_key` / `delete_api_key` - Create a key (its secret is shown once), disable, re-enable or change one, or delete one. Off by default (`DEAPI_KEY_MANAGEMENT_TOOLS=false`): the tools then change nothing and answer with the link to the dashboard, so the assistant can send the user there. On, they act and are marked destructive, so clients ask the user before each call. A created key's secret passes through the conversation, so turn this on only where that is acceptable
+
 ### Webhooks
 
 Every generation tool accepts `webhook_url` (HTTPS) and an optional `webhook_secret` (32–255 chars). deAPI calls that URL when the job finishes, signed with `X-DeAPI-Signature: sha256=<HMAC-SHA256(secret, "<timestamp>.<body>")>`; the tool still returns the result to the caller as usual.
@@ -258,6 +268,7 @@ Use audio_transcription with:
   - `embedding.py` - Text embedding tools
   - `prompt.py` - Prompt booster tools
   - `utility.py` - Balance, models, status tools
+  - `account.py` - Account, usage, payments and API key tools
 
 ### Smart Adaptive Polling
 
@@ -305,6 +316,9 @@ DEAPI_TOOL_MAX_WAIT=45.0
 
 # Check a plain API key against deAPI at connect (cached; an API outage lets keys through)
 DEAPI_VERIFY_API_KEYS=true
+# Let the key tools create, change and delete API keys (needs an ADMIN key). Off: they
+# answer with the dashboard link
+DEAPI_KEY_MANAGEMENT_TOOLS=false
 
 # OAuth for self-registering clients (DCR, CIMD) with a deAPI sign-in screen
 DEAPI_OAUTH_PUBLIC_CLIENTS=true
@@ -374,6 +388,7 @@ mcp-server-deapi/
 │       ├── embedding.py       # Text embeddings
 │       ├── prompt.py          # Prompt booster
 │       ├── utility.py         # Balance, models, status
+│       ├── account.py         # Account, usage, payments, API keys
 │       ├── _price_helpers.py  # Resolve parameters from the model card
 │       └── _responses.py      # Shared tool response shape
 ├── tests/                     # Test suite

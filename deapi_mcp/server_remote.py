@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 
 import uvicorn
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from starlette.applications import Starlette
 
 # Import FastMCP-compatible auth provider
@@ -26,6 +27,9 @@ from .fastmcp_auth import (
 from .icons import WEBSITE_URL, favicon, mcp_icons, sized_icon
 
 # Import tool functions
+from .tools.account import MANAGEMENT_TOOLS as ACCOUNT_MANAGEMENT_TOOLS
+from .tools.account import READ_TOOLS as ACCOUNT_READ_TOOLS
+from .tools.account import create_api_key
 from .tools.audio import (
     audio_transcription,
     audio_transcription_price,
@@ -132,6 +136,23 @@ def register_core_tools(server: FastMCP) -> None:
     server.tool()(get_balance)
     server.tool()(get_available_models)
     server.tool()(check_job_status)
+    # Account and API keys. Reading changes nothing. The key management tools are
+    # destructive when DEAPI_KEY_MANAGEMENT_TOOLS is on (clients then ask the user first);
+    # off, they only return the dashboard link, so they are marked read-only.
+    for reader in ACCOUNT_READ_TOOLS:
+        server.tool(annotations=ToolAnnotations(read_only_hint=True, open_world_hint=True))(reader)
+    from .config import settings as deapi_settings
+
+    managing = deapi_settings.key_management_tools
+    for manager in ACCOUNT_MANAGEMENT_TOOLS:
+        server.tool(
+            annotations=ToolAnnotations(
+                read_only_hint=not managing,
+                destructive_hint=managing,
+                idempotent_hint=manager is not create_api_key,
+                open_world_hint=True,
+            )
+        )(manager)
 
 
 # Register the core tools on this module's server instance (import-time behaviour).

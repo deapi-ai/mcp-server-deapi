@@ -40,6 +40,7 @@ CATEGORIES = (
     ("embedding", "Embeddings"),
     ("prompt", "Prompts"),
     ("utility", "Account and jobs"),
+    ("account", "Account usage and API keys"),
 )
 
 CSS = """
