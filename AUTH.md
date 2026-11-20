@@ -332,14 +332,18 @@ clients cannot forge (for example `CF-Connecting-IP` behind Cloudflare); otherwi
 connection address is used, which a proxy that trusts `X-Forwarded-For` blindly lets the
 client choose.
 
-A loopback redirect matches on any port; its query is not compared, and an empty path is
-taken as `/` (Continue registers `http://localhost:3000/?state=...` and then sends
-`http://localhost:3000`). Every other redirect matches character for character.
+A loopback redirect matches on any port, an empty path is taken as `/`, and the registered
+query may be left out (Continue registers `http://localhost:3000/?state=...` and then sends
+`http://localhost:3000`); a query that is sent must be the registered one, and no redirect
+URI may contain `#`. Every other redirect matches character for character. A client's
+redirect URIs total at most 2,048 characters.
 
 At `/token` a public client sends its `client_id` in the form or in `Authorization: Basic`
 (an `https` client ID sent there without URL-encoding is read correctly too); a client
 that sends only a `private_key_jwt` assertion is identified by the assertion's `sub`,
-which is not verified, since PKCE and the redirect bind the code. The discovery documents,
+which is not verified, since PKCE and the redirect bind the code. Such a client (ChatGPT)
+is treated as public, like every other client here: its refresh token works without the
+client's private key, so it must be kept as secret as any other public client's. The discovery documents,
 `/register` and `/token` answer CORS requests from any origin (no credentials), for
 clients that run in a browser; `/authorize` and `/mcp` do not.
 

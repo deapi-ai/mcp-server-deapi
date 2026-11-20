@@ -44,6 +44,9 @@ PREREGISTERED_CLIENT_ID = "deapi-mcp"
 
 MAX_REDIRECT_URIS = 16
 MAX_REDIRECT_URI_LENGTH = 512
+# All of a client's redirect URIs together. A registered client_id carries them, and so does
+# every token's subject, so this keeps tokens a size proxies accept.
+MAX_REDIRECT_URIS_TOTAL = 2048
 MAX_CLIENT_NAME_LENGTH = 80
 MAX_METADATA_BYTES = 5 * 1024
 CIMD_TIMEOUT_SECONDS = 5.0
@@ -96,7 +99,8 @@ _INVISIBLE = re.compile(
     "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff]"
 )
 _LETTERS = re.compile(r"[^a-z0-9]")
-_TRAILING_PARENTHESIS = re.compile(r"\s*\([^()]*\)\s*$")
+# "Claude Code (deapi)": a client naming the server it connects to, after its own name
+_SERVER_NAME_SUFFIX = re.compile(r"\s+\(([^()]*)\)$")
 # A host name as DNS writes it: ASCII letters, digits and hyphens (an IDN in its xn-- form).
 # Anything else could look like another host on the sign-in screen, or break the CSP
 # header the redirect's origin is written into.
@@ -148,7 +152,7 @@ def valid_redirect_uri(uri: Any) -> bool:
     """https anywhere, http only on loopback, or a native app's private-use scheme."""
     if not isinstance(uri, str) or not uri or len(uri) > MAX_REDIRECT_URI_LENGTH:
         return False
-    if _CONTROL.search(uri) or " " in uri:
+    if _CONTROL.search(uri) or " " in uri or "#" in uri:
         return False
     try:
         parts = urlsplit(uri)
@@ -178,10 +182,10 @@ def valid_redirect_uri(uri: Any) -> bool:
 def redirect_matches(registered: str, requested: str) -> bool:
     """Exact match, except on loopback.
 
-    A loopback http redirect may use any port (RFC 8252 §7.3), and its query is not
-    compared, with an empty path taken as "/": some clients register
-    ``http://localhost:3000/?state=...`` and then send ``http://localhost:3000``. The
-    code still only goes to this computer.
+    A loopback http redirect may use any port (RFC 8252 §7.3), an empty path is taken as
+    "/", and the query may be left out: some clients register
+    ``http://localhost:3000/?state=...`` and then send ``http://localhost:3000``. A query
+    that is sent must be the registered one, so nobody can add a ``code`` of their own.
     """
     if not valid_redirect_uri(requested):
         return False
@@ -190,7 +194,10 @@ def redirect_matches(registered: str, requested: str) -> bool:
     if not (is_loopback_redirect(registered) and is_loopback_redirect(requested)):
         return False
     a, b = urlsplit(registered), urlsplit(requested)
-    return (a.hostname, a.path or "/") == (b.hostname, b.path or "/")
+    return (a.hostname, a.path or "/") == (b.hostname, b.path or "/") and b.query in (
+        "",
+        a.query,
+    )
 
 
 # Cyrillic and Greek letters that look like the Latin ones in "deapi".
@@ -214,6 +221,11 @@ _LOOKALIKES = str.maketrans(
 )
 
 
+def _skeleton(text: str) -> str:
+    """Lower-case ASCII letters and digits only, look-alike letters folded to Latin."""
+    return _LETTERS.sub("", text.lower().translate(_LOOKALIKES))
+
+
 def _clean_name(value: Any, fallback: str) -> str:
     """A name safe to show: no control or invisible characters, short, not posing as deAPI."""
     if not isinstance(value, str):
@@ -221,10 +233,15 @@ def _clean_name(value: Any, fallback: str) -> str:
     name = unicodedata.normalize("NFKC", value)
     name = " ".join(_INVISIBLE.sub("", _CONTROL.sub("", name)).split())
     # Only deAPI may call itself deAPI on its own sign-in screen. A client that names the
-    # server it connects to in a trailing parenthesis ("Claude Code (deapi)") keeps its name.
-    own_part = _TRAILING_PARENTHESIS.sub("", name)
-    skeleton = _LETTERS.sub("", own_part.lower().translate(_LOOKALIKES))
-    if "deapi" in skeleton:
+    # server it connects to after its own name, exactly "(deapi)" or "(deapi mcp)", keeps it
+    # ("Claude Code (deapi)"); anything else mentioning deAPI is replaced.
+    own_part = name
+    suffix = _SERVER_NAME_SUFFIX.search(name)
+    if suffix and _skeleton(suffix.group(1)) in ("deapi", "deapimcp"):
+        own_part = name[: suffix.start()]
+        if not _skeleton(own_part):
+            return fallback
+    if "deapi" in _skeleton(own_part):
         return fallback
     return name[:MAX_CLIENT_NAME_LENGTH] or fallback
 
@@ -245,6 +262,7 @@ def _validated_metadata(data: Any, *, registration: bool = False) -> tuple[str, 
         not isinstance(uris, list)
         or not uris
         or len(uris) > MAX_REDIRECT_URIS
+        or sum(len(u) for u in uris if isinstance(u, str)) > MAX_REDIRECT_URIS_TOTAL
         or not all(valid_redirect_uri(u) for u in uris)
     ):
         raise ValueError(

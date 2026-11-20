@@ -402,7 +402,8 @@ def main() -> None:
     starlette_app = build_app()
 
     # Configure and run uvicorn
-    # proxy_headers=True: Trust X-Forwarded-Proto, X-Forwarded-Host from ingress/proxy
+    # proxy_headers=True: Trust X-Forwarded-Proto and X-Forwarded-For from ingress/proxy
+    # (uvicorn does not read X-Forwarded-Host; set PUBLIC_BASE_URL for the public URL)
     # forwarded_allow_ips="*": Accept forwarded headers from any IP.
     #   IMPORTANT: Only safe when the server is behind a reverse proxy (nginx, ingress, etc.)
     #   that is the sole entry point. If the server is directly exposed to the internet,

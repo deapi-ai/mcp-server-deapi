@@ -15,8 +15,9 @@ Defences, in the order a request meets them:
 - a double-submit CSRF cookie (``SameSite=Strict``, ``__Host-`` on https);
 - failed key attempts are counted per client IP (Redis when configured, shared by every
   replica) and refused after ``MAX_KEY_FAILURES`` in ``KEY_FAILURE_WINDOW``;
-- the page loads nothing, runs no script, cannot be framed, and is never cached; its CSP
-  allows the form to post only here and to redirect only to the client's own URI.
+- the page loads nothing, runs no script, cannot be framed, and is never cached; every
+  value it shows is escaped. Its CSP sets no ``form-action``: Chromium applies that to every
+  redirect after the POST, and a client's callback often redirects again.
 
 The key is never logged and never echoed back into the page.
 """

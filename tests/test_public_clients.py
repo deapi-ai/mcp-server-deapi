@@ -1153,3 +1153,43 @@ async def test_redis_limiter_sets_the_window_atomically():
     assert 0 < await limiter._redis.ttl(key) <= consent.KEY_FAILURE_WINDOW
     assert await limiter.blocked("198.51.100.1")
     assert not await limiter.blocked("198.51.100.2")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "(deAPI)",
+        "de(API)",
+        "deA(PI)",
+        "DEAP(I)",
+        "Official sign-in (deAPI)x",
+        "Sign-in (deAPI official)",
+        "(deAPI MCP - official login)",
+        " (deapi)",
+    ],
+)
+def test_a_parenthesis_cannot_smuggle_deapi_into_a_name(name):
+    assert oauth_clients._clean_name(name, "Unnamed application") == "Unnamed application"
+
+
+def test_a_loopback_redirect_cannot_carry_a_query_of_its_own():
+    registered = "http://localhost:3000/cb"
+    injected = "http://localhost:4444/cb?code=INJECTED&iss=https://evil.example"
+    assert not oauth_clients.redirect_matches(registered, injected)
+    assert not oauth_clients.redirect_matches(registered, "http://localhost:4444/cb?x=1#")
+    # The registered query, or none at all, still matches
+    assert oauth_clients.redirect_matches(
+        "http://localhost:3000/?state=abc", "http://localhost:9/?state=abc"
+    )
+
+
+def test_a_bare_trailing_hash_is_refused():
+    assert not oauth_clients.valid_redirect_uri("http://localhost:4444/cb#")
+    assert not oauth_clients.valid_redirect_uri("https://client.example.com/cb#")
+
+
+def test_redirect_uris_are_bounded_in_total(app_client):
+    uris = [f"https://client.example.com/{i}/" + "x" * 400 for i in range(6)]
+    r = register(app_client, redirect_uris=uris)
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_redirect_uri"

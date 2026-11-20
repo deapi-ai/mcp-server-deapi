@@ -116,3 +116,26 @@ def test_copy_values_are_escaped():
     html = render_landing('https://evil.example/"><img src=x onerror=alert(1)>', [])
     assert "<img" not in html
     assert 'data-copy="https://evil.example/&quot;&gt;&lt;img' in html
+
+
+def test_a_host_header_that_is_not_a_plain_host_is_not_used(monkeypatch):
+    from starlette.requests import Request
+
+    from deapi_mcp.landing import PLACEHOLDER_BASE_URL, public_base_url
+
+    monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+
+    def request(host):
+        scope = {
+            "type": "http",
+            "scheme": "https",
+            "server": ("10.0.0.1", 443),
+            "path": "/",
+            "headers": [(b"host", host.encode())],
+        }
+        return Request(scope)
+
+    assert public_base_url(request("mcp.example.com")) == "https://mcp.example.com"
+    assert public_base_url(request("[::1]:8000")) == "https://[::1]:8000"
+    for bad in ("a.example;id;x", "a.example$(id)", "a.example&x", "a.example'x"):
+        assert public_base_url(request(bad)) == PLACEHOLDER_BASE_URL, bad

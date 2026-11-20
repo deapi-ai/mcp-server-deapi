@@ -12,6 +12,7 @@ the server actually serves.
 import base64
 import hashlib
 import os
+import re
 from html import escape
 from typing import Any, Optional, Sequence
 
@@ -462,9 +463,25 @@ href="{SECURITY_URL}">Security</a>
 """
 
 
+# A host[:port] as DNS or an IP literal writes it. The page puts the URL into shell commands
+# that people copy, so a Host header with anything else (";", "$", "&"...) is not used.
+_PLAIN_NETLOC = re.compile(r"(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?")
+PLACEHOLDER_BASE_URL = "https://your-mcp-server.example.com"
+
+
 def public_base_url(request: Request) -> str:
-    """The URL clients reach this server on: PUBLIC_BASE_URL, else the request's own."""
-    return os.getenv("PUBLIC_BASE_URL") or f"{request.url.scheme}://{request.url.netloc}"
+    """The URL clients reach this server on: PUBLIC_BASE_URL, else the request's own.
+
+    Set PUBLIC_BASE_URL in production. Without it the request's Host is used, and only
+    when it is a plain host[:port]; otherwise the page shows a placeholder.
+    """
+    configured = os.getenv("PUBLIC_BASE_URL")
+    if configured:
+        return configured
+    scheme, netloc = request.url.scheme, request.url.netloc
+    if scheme in ("http", "https") and _PLAIN_NETLOC.fullmatch(netloc):
+        return f"{scheme}://{netloc}"
+    return PLACEHOLDER_BASE_URL
 
 
 def landing_response(base_url: str, tools: Sequence[Any]) -> Response:
