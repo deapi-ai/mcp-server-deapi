@@ -3,6 +3,16 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.7.2
+
+### Fixed
+- Claude (claude.ai and Claude Desktop) can connect with the sign-in window. Its client
+  metadata document, and its dynamic registration, list a JWT-bearer grant besides
+  `authorization_code` and `refresh_token`, and the server refused any client that listed a
+  grant it does not offer, so both ways ended on "This application is not registered". A
+  client must now list `authorization_code` (and the `code` response type); other grants and
+  response types are ignored, and only the code flow and refresh are ever honoured.
+
 ## 0.7.1
 
 Security hardening after a review of 0.7.0. No known exploit; nothing changes for a client

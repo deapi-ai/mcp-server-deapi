@@ -237,20 +237,23 @@ def _validated_metadata(data: Any) -> tuple[str, tuple[str, ...]]:
     method = data.get("token_endpoint_auth_method", "none")
     if method != "none":
         raise ValueError("token_endpoint_auth_method must be none (public client with PKCE)")
+    # Only authorization_code (and refresh_token) are ever honoured; any other grant a client
+    # lists is ignored, not refused. Claude's own metadata document lists a JWT-bearer grant
+    # too, and refusing it would refuse Claude.
     grants = data.get("grant_types", ["authorization_code"])
     if (
         not isinstance(grants, list)
         or not all(isinstance(g, str) for g in grants)
-        or not set(grants) <= {"authorization_code", "refresh_token"}
+        or "authorization_code" not in grants
     ):
-        raise ValueError("grant_types may only contain authorization_code and refresh_token")
+        raise ValueError("grant_types must include authorization_code")
     responses = data.get("response_types", ["code"])
     if (
         not isinstance(responses, list)
         or not all(isinstance(r, str) for r in responses)
-        or not set(responses) <= {"code"}
+        or "code" not in responses
     ):
-        raise ValueError("response_types may only contain code")
+        raise ValueError("response_types must include code")
     return _clean_name(data.get("client_name"), "Unnamed application"), tuple(uris)
 
 
