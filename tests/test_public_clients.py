@@ -860,6 +860,53 @@ def test_non_ascii_form_fields_are_refused_not_500(app_client, api):
     assert submit(app_client, page, request="ż.ł").status_code == 400
 
 
+# Claude's published client metadata document, as served at its client_id URL
+CLAUDE_CIMD = {
+    "client_id": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+    "client_name": "Claude",
+    "client_uri": "https://claude.ai",
+    "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+    "grant_types": [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    ],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none",
+}
+
+
+async def test_claudes_metadata_document_is_accepted(monkeypatch):
+    oauth_clients.clear_cimd_cache()
+
+    async def document(url):
+        return json.dumps(CLAUDE_CIMD).encode(), "application/json"
+
+    monkeypatch.setattr(oauth_clients, "_fetch_metadata", document)
+    try:
+        client = await oauth_clients.fetch_cimd_client(CLAUDE_CIMD["client_id"])
+        assert client is not None
+        assert client.name == "Claude"
+        assert client.allows_redirect("https://claude.ai/api/mcp/auth_callback")
+    finally:
+        oauth_clients.clear_cimd_cache()
+
+
+def test_registration_ignores_grants_it_does_not_offer(app_client, api):
+    body = {k: v for k, v in CLAUDE_CIMD.items() if k != "client_id"}
+    r = app_client.post("/register", json=body)
+    assert r.status_code == 201, r.text
+    assert r.json()["grant_types"] == ["authorization_code", "refresh_token"]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [{"grant_types": ["refresh_token"]}, {"response_types": ["token", "id_token"]}],
+)
+def test_registration_needs_the_code_flow(app_client, api, metadata):
+    assert register(app_client, **metadata).status_code == 400
+
+
 @pytest.mark.parametrize("name", ["dеАРІ", "ｄｅａｐｉ", "dεαρι tool"])
 def test_lookalike_deapi_names_are_replaced(app_client, api, name):
     client_id = dcr_client(app_client, client_name=name)
