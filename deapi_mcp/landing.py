@@ -145,6 +145,7 @@ SECURITY_HEADERS = {
         "default-src 'none'; "
         f"style-src 'sha256-{_STYLE_HASH}'; "
         f"script-src 'sha256-{_SCRIPT_HASH}'; "
+        "img-src 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
@@ -304,6 +305,7 @@ def render_landing(base_url: str, tools: Sequence[Any]) -> str:
 <meta name=viewport content="width=device-width, initial-scale=1">
 <meta name=referrer content=no-referrer>
 <title>deAPI MCP Server</title>
+<link rel=icon type=image/png sizes=64x64 href="/icon-64.png">
 <meta name=description content="Connect Claude, ChatGPT, Cursor, VS Code, Codex and other MCP clients to deAPI: image, video, audio, transcription, OCR and embedding models.">
 <style>{CSS}</style>
 </head>

@@ -3,7 +3,19 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
-## 0.7.4
+## 0.8.0 (unreleased)
+
+### Added
+- The sign-in screen shows the application's picture for a client identified by a metadata
+  document: its `logo_uri` when that is on the client's own site (or a logo host known for
+  it, such as ChatGPT's), else the favicon of its host. The server fetches it (public
+  addresses only, 160 kB, 2.5 s), keeps only PNG, ICO, GIF, JPEG or WebP (never SVG), and
+  puts it into the page as a `data:` URI, so the browser loads nothing from elsewhere.
+  Cached a day per client. A self-registered client chose its own name and keeps a letter,
+  so nobody can sign in under someone else's logo.
+- deAPI's icon: served at `/favicon.ico` and `/icon-{32,64,128}.png`, linked from the setup
+  page and the sign-in screen, and announced in the MCP `serverInfo` (`icons`, `websiteUrl`)
+  for clients that show a connector's picture.
 
 ### Changed
 - The links on the sign-in screen (API keys page, docs, logo) open in a new tab, so

@@ -23,6 +23,7 @@ from .fastmcp_auth import (
     InvalidTokenDescriptionMiddleware,
     OAuthCorsMiddleware,
 )
+from .icons import WEBSITE_URL, favicon, mcp_icons, sized_icon
 
 # Import tool functions
 from .tools.audio import (
@@ -70,7 +71,13 @@ from .webhooks import JobRegistry, get_job_registry, set_job_registry
 
 # Initialize FastMCP server WITHOUT auth (will be added later)
 # Auth requires knowing the base URL which we don't have until runtime
-mcp = FastMCP(name="deAPI AI API", version=__version__, auth=None)
+mcp = FastMCP(
+    name="deAPI AI API",
+    version=__version__,
+    website_url=WEBSITE_URL,
+    icons=mcp_icons(os.getenv("PUBLIC_BASE_URL")),
+    auth=None,
+)
 
 
 def register_core_tools(server: FastMCP) -> None:
@@ -308,6 +315,9 @@ def create_app(
         return landing_response(public_base_url(request), landing_tools)
 
     starlette_app.routes.append(Route("/", landing_page, methods=["GET"]))
+    # deAPI's icon: the pages' favicon and the picture announced in serverInfo
+    starlette_app.routes.append(Route("/favicon.ico", favicon, methods=["GET"]))
+    starlette_app.routes.append(Route("/icon-{size:int}.png", sized_icon, methods=["GET"]))
 
     if metrics is not None:
         metrics.wrap_app(starlette_app, server)

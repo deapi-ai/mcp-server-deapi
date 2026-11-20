@@ -10,6 +10,23 @@ from deapi_mcp.config import settings
 
 
 @pytest.fixture(autouse=True)
+def _no_client_icon_fetch(monkeypatch):
+    """The sign-in screen never fetches a client's picture from the network in tests.
+
+    tests/test_icons.py stubs the fetch itself to test it.
+    """
+    from deapi_mcp import client_icons
+
+    async def no_icon(url):
+        return None
+
+    monkeypatch.setattr(client_icons, "_fetch_image", no_icon)
+    client_icons.clear_icon_cache()
+    yield
+    client_icons.clear_icon_cache()
+
+
+@pytest.fixture(autouse=True)
 def _no_live_key_check(monkeypatch):
     """Tests carry made-up keys and must never ask the real API about them.
 

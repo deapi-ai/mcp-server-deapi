@@ -55,7 +55,11 @@ def test_page_loads_nothing_and_runs_only_its_own_script(app_client):
     text = app_client.get("/").text
     assert text.count("<script") == 1
     assert "<script src" not in text
-    assert not re.search(r"<(img|link|iframe|object|embed)\b", text)
+    assert not re.search(r"<(img|iframe|object|embed)\b", text)
+    # One link element: the favicon, served by this server
+    assert re.findall(r"<link\b[^>]*>", text) == [
+        '<link rel=icon type=image/png sizes=64x64 href="/icon-64.png">'
+    ]
     assert " style=" not in text  # inline style attributes would break the CSP
 
 
