@@ -54,17 +54,71 @@ class ApiKeyHeaderMiddleware:
         on_mcp = scope.get("path", "").startswith(MCP_PATH_PREFIX)
         if on_mcp:
             headers = scope.get("headers") or []
-            if not any(name == b"authorization" for name, _ in headers):
+            # An empty Authorization header counts as none
+            if not any(name == b"authorization" and value.strip() for name, value in headers):
                 key = next((value for name, value in headers if name == API_KEY_HEADER), b"")
                 key = key.strip()
                 if key:
                     scope = dict(scope)
-                    scope["headers"] = [*headers, (b"authorization", b"Bearer " + key)]
+                    scope["headers"] = [
+                        *(h for h in headers if h[0] != b"authorization"),
+                        (b"authorization", b"Bearer " + key),
+                    ]
         marker = _mcp_request.set(on_mcp)
         try:
             await self.app(scope, receive, send)
         finally:
             _mcp_request.reset(marker)
+
+
+CORS_PREFLIGHT_HEADERS = [
+    (b"access-control-allow-origin", b"*"),
+    (b"access-control-allow-methods", b"GET, POST, OPTIONS"),
+    (b"access-control-allow-headers", b"Authorization, Content-Type, MCP-Protocol-Version"),
+    (b"access-control-max-age", b"86400"),
+]
+
+
+def _is_cors_path(path: str) -> bool:
+    return path.startswith("/.well-known/oauth-") or path in ("/register", "/token")
+
+
+class OAuthCorsMiddleware:
+    """CORS for the discovery documents, ``/register`` and ``/token``, nothing else.
+
+    A client that runs in a browser (MCP Inspector, vscode.dev) reads these from its
+    own page, which a browser allows only with CORS. Any origin, no credentials: these
+    endpoints take no cookies, and a token still needs the code and its PKCE verifier
+    (or the API key). ``/authorize`` is a page the user visits and ``/mcp`` keeps its
+    own handling, so neither is touched.
+    """
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http" or not _is_cors_path(scope.get("path", "")):
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers") or [])
+        if scope.get("method") == "OPTIONS" and b"access-control-request-method" in headers:
+            await send(
+                {"type": "http.response.start", "status": 204, "headers": CORS_PREFLIGHT_HEADERS}
+            )
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        async def send_with_cors(message: Any) -> None:
+            if message["type"] == "http.response.start":
+                existing = message.get("headers") or []
+                if not any(name.lower() == b"access-control-allow-origin" for name, _ in existing):
+                    message = {
+                        **message,
+                        "headers": [*existing, (b"access-control-allow-origin", b"*")],
+                    }
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)
 
 
 # Shown to the user by clients that surface error_description. No double quotes: it sits
@@ -79,9 +133,8 @@ _DESCRIPTION_PARAM = re.compile(rb'error_description="[^"]*"')
 class InvalidTokenDescriptionMiddleware:
     """Replace FastMCP's text in a 401 ``invalid_token`` answer on /mcp with ours.
 
-    FastMCP tells the client to "re-register and obtain new tokens", which suits a
-    server with dynamic client registration. This one has none: the fix is a working
-    API key, or signing in again with the pre-registered client. Status, error code
+    FastMCP tells the client to "re-register and obtain new tokens". Registering again
+    does not help here: the fix is a working API key, or signing in again. Status, error code
     and ``resource_metadata`` are kept; only ``error_description`` changes, in the
     ``WWW-Authenticate`` header and in the JSON body.
     """

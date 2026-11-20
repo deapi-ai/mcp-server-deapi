@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 PREREGISTERED_CLIENT_ID = "deapi-mcp"
 
-MAX_REDIRECT_URIS = 5
+MAX_REDIRECT_URIS = 16
 MAX_REDIRECT_URI_LENGTH = 512
 MAX_CLIENT_NAME_LENGTH = 80
 MAX_METADATA_BYTES = 5 * 1024
@@ -63,7 +63,7 @@ CIMD_MAX_FETCHES_PER_SITE = 4
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 # Native apps' private-use schemes (RFC 8252 §7.1) take reverse-domain form, so they contain
 # a dot. Schemes without one are accepted only from this list of known MCP clients.
-KNOWN_NATIVE_SCHEMES = {"cursor"}
+KNOWN_NATIVE_SCHEMES = {"cursor", "raycast"}
 # Never a redirect target: browser-internal, OS protocol handlers, network and messaging.
 FORBIDDEN_SCHEMES = {
     "javascript",
@@ -96,6 +96,7 @@ _INVISIBLE = re.compile(
     "\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff]"
 )
 _LETTERS = re.compile(r"[^a-z0-9]")
+_TRAILING_PARENTHESIS = re.compile(r"\s*\([^()]*\)\s*$")
 # A host name as DNS writes it: ASCII letters, digits and hyphens (an IDN in its xn-- form).
 # Anything else could look like another host on the sign-in screen, or break the CSP
 # header the redirect's origin is written into.
@@ -175,7 +176,13 @@ def valid_redirect_uri(uri: Any) -> bool:
 
 
 def redirect_matches(registered: str, requested: str) -> bool:
-    """Exact match; a loopback http redirect may use any port (RFC 8252 §7.3)."""
+    """Exact match, except on loopback.
+
+    A loopback http redirect may use any port (RFC 8252 §7.3), and its query is not
+    compared, with an empty path taken as "/": some clients register
+    ``http://localhost:3000/?state=...`` and then send ``http://localhost:3000``. The
+    code still only goes to this computer.
+    """
     if not valid_redirect_uri(requested):
         return False
     if registered == requested:
@@ -183,7 +190,7 @@ def redirect_matches(registered: str, requested: str) -> bool:
     if not (is_loopback_redirect(registered) and is_loopback_redirect(requested)):
         return False
     a, b = urlsplit(registered), urlsplit(requested)
-    return (a.hostname, a.path, a.query) == (b.hostname, b.path, b.query)
+    return (a.hostname, a.path or "/") == (b.hostname, b.path or "/")
 
 
 # Cyrillic and Greek letters that look like the Latin ones in "deapi".
@@ -213,14 +220,24 @@ def _clean_name(value: Any, fallback: str) -> str:
         return fallback
     name = unicodedata.normalize("NFKC", value)
     name = " ".join(_INVISIBLE.sub("", _CONTROL.sub("", name)).split())
-    skeleton = _LETTERS.sub("", name.lower().translate(_LOOKALIKES))
+    # Only deAPI may call itself deAPI on its own sign-in screen. A client that names the
+    # server it connects to in a trailing parenthesis ("Claude Code (deapi)") keeps its name.
+    own_part = _TRAILING_PARENTHESIS.sub("", name)
+    skeleton = _LETTERS.sub("", own_part.lower().translate(_LOOKALIKES))
     if "deapi" in skeleton:
-        return fallback  # only deAPI may call itself deAPI on its own sign-in screen
+        return fallback
     return name[:MAX_CLIENT_NAME_LENGTH] or fallback
 
 
-def _validated_metadata(data: Any) -> tuple[str, tuple[str, ...]]:
-    """(client name, redirect URIs) from registration or CIMD metadata, or ValueError."""
+def _validated_metadata(data: Any, *, registration: bool = False) -> tuple[str, tuple[str, ...]]:
+    """(client name, redirect URIs) from registration or CIMD metadata, or ValueError.
+
+    ``registration``: the metadata of a ``POST /register``. The server may then replace
+    what the client asked for (RFC 7591 §3.2.1), so any requested token endpoint auth
+    method is accepted and the client is registered as public (``none``), which the
+    response says. A metadata document cannot be changed that way, so it must allow
+    ``none`` itself.
+    """
     if not isinstance(data, dict):
         raise ValueError("client metadata must be a JSON object")
     uris = data.get("redirect_uris")
@@ -239,7 +256,8 @@ def _validated_metadata(data: Any) -> tuple[str, tuple[str, ...]]:
     # with this server, which offers no other method to such clients.
     method = data.get("token_endpoint_auth_method", "none")
     supported = data.get("token_endpoint_auth_methods_supported")
-    if method != "none" and not (isinstance(supported, list) and "none" in supported):
+    allows_none = method == "none" or (isinstance(supported, list) and "none" in supported)
+    if not isinstance(method, str) or not (allows_none or registration):
         raise ValueError("token_endpoint_auth_method must be none (public client with PKCE)")
     # Only authorization_code (and refresh_token) are ever honoured; any other grant a client
     # lists is ignored, not refused. Claude's own metadata document lists a JWT-bearer grant
@@ -323,7 +341,7 @@ async def register_endpoint(request: Request) -> JSONResponse:
     except (ValueError, RecursionError):
         return _registration_error("invalid_client_metadata", "The body must be a JSON object")
     try:
-        name, uris = _validated_metadata(data)
+        name, uris = _validated_metadata(data, registration=True)
     except ValueError as exc:
         error = "invalid_redirect_uri" if "redirect_uris" in str(exc) else "invalid_client_metadata"
         return _registration_error(error, str(exc))

@@ -290,25 +290,31 @@ Clients that cannot be given a secret by hand (hosted connectors, apps that regi
 themselves) are public clients. They get a client ID in one of two ways, both advertised in
 `/.well-known/oauth-authorization-server`:
 
-- **Dynamic client registration** (`POST /register`, RFC 7591). Only public clients
-  (`token_endpoint_auth_method: none`) with the `authorization_code` / `refresh_token` grants
-  are accepted, with 1-5 redirect URIs: `https` on a plain DNS name (ASCII; an
-  internationalized name in its `xn--` form) without user info, `http` on loopback only, or a native app's
-  private-use scheme (reverse-domain form like `com.example.app:`, or a known client's own
-  such as `cursor:`; OS protocol handlers are refused). The returned `client_id` is the
+- **Dynamic client registration** (`POST /register`, RFC 7591). Every client is registered
+  as public (`token_endpoint_auth_method: none`, no secret): one that asks for
+  `client_secret_post`, `client_secret_basic` or another method gets `none` back, as RFC 7591
+  allows. It must list the `authorization_code` grant and the `code` response type; other
+  grants and response types are ignored. 1-16 redirect URIs: `https` on a plain DNS name
+  (ASCII; an internationalized name in its `xn--` form) without user info, `http` on loopback
+  only, or a native app's private-use scheme (reverse-domain form like `com.example.app:`, or
+  a known client's own such as `cursor:` and `raycast:`; OS protocol handlers are refused). The returned `client_id` is the
   registration itself, signed with a key derived from `DEAPI_JWT_SECRET_KEY`: nothing is
   stored, and any replica can verify it. Bodies are limited to 8 kB.
 - **Client ID metadata documents.** An `https` `client_id` with a path is fetched as JSON
   (public addresses only, no redirects, uncompressed, 5 kB, 5 seconds in total, at most 16
   at once and 4 for one site) and must name itself as `client_id`. Its host must be a plain
-  DNS name, like a redirect's. A document is reused for 5 minutes; a failed fetch is
+  DNS name, like a redirect's. It must allow `none` as its token endpoint auth method, as its
+  own method or in `token_endpoint_auth_methods_supported` (ChatGPT prefers
+  `private_key_jwt` and lists `none` too). Tested with the documents of claude.ai, Claude
+  Code, ChatGPT, Codex, VS Code, GitHub Copilot CLI, Zed and Goose. A document is reused for 5 minutes; a failed fetch is
   not retried for 1 minute.
 
 For a public client, `GET /authorize` shows a deAPI sign-in screen instead of redirecting at
 once. It names the application, says where the access goes (the redirect host), and warns
 about unverified (self-registered) applications, apps on this computer (loopback), apps on
 the device (native schemes) and metadata documents whose redirect is on another site. Names
-lose control and invisible characters, and a name that poses as deAPI is replaced. The user
+lose control and invisible characters, and a name that poses as deAPI is replaced (a
+trailing parenthesis naming the server, as in `Claude Code (deapi)`, is allowed). The user
 pastes an API key; `POST /authorize` checks it with deAPI and only then issues the code (the
 key is kept Fernet-encrypted in the 10-minute code record).
 
@@ -318,11 +324,24 @@ inside an HMAC-signed, 10-minute token; a double-submit CSRF cookie (`__Host-`, 
 (an IPv6 address counts as its /64; each attempt is counted before the key is checked and
 given back when the key is good, so concurrent attempts cannot get past the limit; counted
 in Redis when configured, so shared by every replica); no script, no framing,
-`Cache-Control: no-store`, and a CSP whose `form-action` allows only this server and the
-client's own redirect target. Set `DEAPI_CLIENT_IP_HEADER` to a header your edge sets and
+`Cache-Control: no-store`, and a CSP that loads nothing. The CSP has no `form-action`:
+Chromium applies it to every redirect after the form's POST, and a client's callback often
+redirects again (`vscode.dev/redirect` to `vscode://` or loopback, a web callback to a
+desktop deep link), which it would block. Set `DEAPI_CLIENT_IP_HEADER` to a header your edge sets and
 clients cannot forge (for example `CF-Connecting-IP` behind Cloudflare); otherwise the
 connection address is used, which a proxy that trusts `X-Forwarded-For` blindly lets the
 client choose.
+
+A loopback redirect matches on any port; its query is not compared, and an empty path is
+taken as `/` (Continue registers `http://localhost:3000/?state=...` and then sends
+`http://localhost:3000`). Every other redirect matches character for character.
+
+At `/token` a public client sends its `client_id` in the form or in `Authorization: Basic`
+(an `https` client ID sent there without URL-encoding is read correctly too); a client
+that sends only a `private_key_jwt` assertion is identified by the assertion's `sub`,
+which is not verified, since PKCE and the redirect bind the code. The discovery documents,
+`/register` and `/token` answer CORS requests from any origin (no credentials), for
+clients that run in a browser; `/authorize` and `/mcp` do not.
 
 Codes from the sign-in screen are kept apart from the pre-registered client's (each with
 its own cap of 10,000), so a flood of anonymous `GET /authorize` requests never pushes out

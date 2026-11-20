@@ -21,6 +21,7 @@ from .fastmcp_auth import (
     ApiKeyHeaderMiddleware,
     DeapiAuthProvider,
     InvalidTokenDescriptionMiddleware,
+    OAuthCorsMiddleware,
 )
 
 # Import tool functions
@@ -368,6 +369,7 @@ def create_app(
     # Added last, so it is the outermost layer: authentication and any overlay
     # middleware (a missing-token counter) see the key as a Bearer token.
     starlette_app.add_middleware(InvalidTokenDescriptionMiddleware)
+    starlette_app.add_middleware(OAuthCorsMiddleware)
     starlette_app.add_middleware(ApiKeyHeaderMiddleware)
 
     logger.info(f"MCP endpoint: http://{host}:{port}/mcp")

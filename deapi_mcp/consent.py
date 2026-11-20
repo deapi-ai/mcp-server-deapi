@@ -253,28 +253,16 @@ def reset_limiter(limiter: Optional[KeyFailureLimiter] = None) -> None:
 # --- pages ------------------------------------------------------------------------------------
 
 
-def _form_action_source(redirect_uri: str) -> str:
-    """The CSP source that lets the form's POST redirect on to ``redirect_uri``.
-
-    Browsers check form-action against redirects that follow a form submission, so the
-    client's own origin (or, for a native app, its scheme) must be listed.
-    """
-    parts = urlsplit(redirect_uri)
-    if parts.scheme in ("http", "https"):
-        host = parts.hostname or ""
-        if ":" in host:
-            host = f"[{host}]"
-        port = f":{parts.port}" if parts.port else ""
-        return f"{parts.scheme}://{host}{port}"
-    return f"{parts.scheme}:"
-
-
-def _headers(redirect_uri: Optional[str] = None) -> dict[str, str]:
-    form_action = "'self'" + (f" {_form_action_source(redirect_uri)}" if redirect_uri else "")
+def _headers() -> dict[str, str]:
+    # No form-action: Chromium applies it to every redirect that follows the form's POST,
+    # and a client's callback often redirects again (vscode.dev/redirect to vscode:// or
+    # loopback, a web callback to a desktop deep link), which it would block. The page
+    # runs no script and escapes everything it shows, so there is no injected form to
+    # stop; default-src 'none' still blocks every fetch.
     return {
         "Content-Security-Policy": (
             f"default-src 'none'; style-src 'sha256-{_STYLE_HASH}'; base-uri 'none'; "
-            f"form-action {form_action}; frame-ancestors 'none'"
+            "frame-ancestors 'none'"
         ),
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
@@ -414,7 +402,7 @@ type=submit name=action value=allow class=solid>Allow access</button></div>
 tokens it cannot read. Deleting the key in deAPI ends this connection.</p>
 </div>"""
     response = HTMLResponse(
-        _page("Connect to deAPI", body), status_code=status_code, headers=_headers(redirect_uri)
+        _page("Connect to deAPI", body), status_code=status_code, headers=_headers()
     )
     return response
 
