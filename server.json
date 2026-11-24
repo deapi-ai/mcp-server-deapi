@@ -11,7 +11,7 @@
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://mcp.deapi.ai/mcp",
+      "url": "https://mcp.deapi.ai/mcp?source=mcp-registry",
       "headers": [
         {
           "name": "Authorization",

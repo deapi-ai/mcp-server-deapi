@@ -6,6 +6,8 @@ releases are git tags `vX.Y.Z`.
 ## 0.8.1
 
 ### Changed
+- The remote URL in `server.json` is `https://mcp.deapi.ai/mcp?source=mcp-registry`, so
+  sessions started from MCP Registry imports can be counted.
 - `server.json` declares the key as an `Authorization` header instead of the OAuth
   `oauth_client_id` / `oauth_client_secret` URL variables. Clients that import the MCP Registry
   (goose among them) skip remote servers with `variables`; a secret header is what they read.
