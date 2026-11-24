@@ -3,6 +3,14 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.8.1
+
+### Changed
+- `server.json` declares the key as an `Authorization` header instead of the OAuth
+  `oauth_client_id` / `oauth_client_secret` URL variables. Clients that import the MCP Registry
+  (goose among them) skip remote servers with `variables`; a secret header is what they read.
+  OAuth sign-in is unchanged: clients still discover it from the server.
+
 ## 0.8.0
 
 ### Added
