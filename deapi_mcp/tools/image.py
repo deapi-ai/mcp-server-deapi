@@ -338,7 +338,7 @@ async def image_to_image(
 
 async def image_to_text(
     image: Annotated[str, Field(description="Image file (base64 encoded or URL)")],
-    model: Annotated[str, Field(description="OCR model (e.g., 'Nanonets_Ocr_S_F16')")],
+    model: Annotated[str, Field(description="OCR model (e.g., 'LightOnOcr_3_4B_Q8')")],
     language: Annotated[
         Optional[str],
         Field(description="Language code for OCR (e.g., 'en', 'es', 'fr') - optional"),
@@ -619,7 +619,7 @@ async def image_to_image_price(
 
 
 async def image_to_text_price(
-    model: Annotated[str, Field(description="OCR model name")],
+    model: Annotated[str, Field(description="OCR model name (e.g., 'LightOnOcr_3_4B_Q8')")],
     image: Annotated[
         Optional[str],
         Field(description="Image to quote (URL, data URI or base64); its size is read from it"),

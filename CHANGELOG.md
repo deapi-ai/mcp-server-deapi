@@ -3,6 +3,20 @@
 All notable changes to this project. Versions follow [Semantic Versioning](https://semver.org/);
 releases are git tags `vX.Y.Z`.
 
+## 0.8.1
+
+### Changed
+- Tool descriptions name current models: `LightOnOcr_3_4B_Q8` for OCR (instead of the
+  retired `Nanonets_Ocr_S_F16`), `Ltx2_5_22B_Dist_INT8` for video and
+  `AceStep_1_5_XL_Turbo_INT8` for music. The catalogue snapshot used by
+  `test_description_slugs` is refreshed (2026-11-24).
+- The remote URL in `server.json` is `https://mcp.deapi.ai/mcp?source=mcp-registry`, so
+  sessions started from MCP Registry imports can be counted.
+- `server.json` declares the key as an `Authorization` header instead of the OAuth
+  `oauth_client_id` / `oauth_client_secret` URL variables. Clients that import the MCP Registry
+  (goose among them) skip remote servers with `variables`; a secret header is what they read.
+  OAuth sign-in is unchanged: clients still discover it from the server.
+
 ## 0.8.0
 
 ### Added

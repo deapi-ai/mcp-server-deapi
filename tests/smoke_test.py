@@ -55,7 +55,7 @@ PRICE_TESTS = [
         "payload": {
             "width": "1920",
             "height": "1080",
-            "model": "Nanonets_Ocr_S_F16",
+            "model": "LightOnOcr_3_4B_Q8",
         },
     },
     {

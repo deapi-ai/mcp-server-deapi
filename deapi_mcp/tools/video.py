@@ -26,7 +26,9 @@ from ._responses import build_job_response, build_price_response, input_error_re
 
 async def image_to_video(
     prompt: Annotated[str, Field(description="Text prompt for video generation")],
-    model: Annotated[str, Field(description="Video generation model name")],
+    model: Annotated[
+        str, Field(description="Video generation model name (e.g., 'Ltx2_5_22B_Dist_INT8')")
+    ],
     first_frame_image: Annotated[
         Optional[str],
         Field(
@@ -235,7 +237,9 @@ async def image_to_video(
 
 async def text_to_video(
     prompt: Annotated[str, Field(description="Text prompt for video generation")],
-    model: Annotated[str, Field(description="Video generation model name")],
+    model: Annotated[
+        str, Field(description="Video generation model name (e.g., 'Ltx2_5_22B_Dist_INT8')")
+    ],
     negative_prompt: Annotated[
         Optional[str], Field(description="Things to exclude (optional)")
     ] = None,
@@ -363,7 +367,9 @@ async def text_to_video(
 
 
 async def image_to_video_price(
-    model: Annotated[str, Field(description="Video generation model name")],
+    model: Annotated[
+        str, Field(description="Video generation model name (e.g., 'Ltx2_5_22B_Dist_INT8')")
+    ],
     width: Annotated[
         Optional[int],
         Field(ge=1, description="Video width in pixels. Limits per model (see the model list)"),
@@ -459,7 +465,9 @@ async def image_to_video_price(
 
 
 async def text_to_video_price(
-    model: Annotated[str, Field(description="Video generation model name")],
+    model: Annotated[
+        str, Field(description="Video generation model name (e.g., 'Ltx2_5_22B_Dist_INT8')")
+    ],
     width: Annotated[
         Optional[int],
         Field(ge=1, description="Video width in pixels. Limits per model (see the model list)"),
@@ -530,7 +538,9 @@ async def audio_to_video(
     prompt: Annotated[str, Field(description="Text prompt for video generation")],
     model: Annotated[
         str,
-        Field(description="Video generation model name (must support audio2video inference type)"),
+        Field(
+            description="Video generation model name that supports audio2video (e.g., 'Ltx2_5_22B_Dist_INT8')"
+        ),
     ],
     audio: Annotated[
         str,
@@ -681,7 +691,9 @@ async def audio_to_video(
 
 
 async def audio_to_video_price(
-    model: Annotated[str, Field(description="Video generation model name")],
+    model: Annotated[
+        str, Field(description="Video generation model name (e.g., 'Ltx2_5_22B_Dist_INT8')")
+    ],
     width: Annotated[
         Optional[int],
         Field(ge=1, description="Video width in pixels. Limits per model (see the model list)"),

@@ -835,7 +835,9 @@ async def text_to_music(
     ],
     model: Annotated[
         str,
-        Field(description="Music generation model name (must support txt2music inference type)"),
+        Field(
+            description="Music generation model name that supports txt2music (e.g., 'AceStep_1_5_XL_Turbo_INT8')"
+        ),
     ],
     lyrics: Annotated[
         str, Field(description="Song lyrics (max 10000 chars). Use '[Instrumental]' for no vocals")
@@ -985,7 +987,9 @@ async def text_to_music(
 
 
 async def text_to_music_price(
-    model: Annotated[str, Field(description="Music generation model name")],
+    model: Annotated[
+        str, Field(description="Music generation model name (e.g., 'AceStep_1_5_XL_Turbo_INT8')")
+    ],
     duration: Annotated[
         float,
         Field(ge=10, le=600, description="Audio duration in seconds, as the job will send it"),

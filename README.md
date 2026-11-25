@@ -1,5 +1,8 @@
 # deAPI MCP Server
 
+[![deapi-ai/mcp-server-deapi MCP server](https://glama.ai/mcp/servers/deapi-ai/mcp-server-deapi/badges/score.svg)](https://glama.ai/mcp/servers/deapi-ai/mcp-server-deapi)
+[![deAPI MCP connector](https://glama.ai/mcp/connectors/io.github.deapi-ai/mcp-server-deapi/badges/score.svg)](https://glama.ai/mcp/connectors/io.github.deapi-ai/mcp-server-deapi)
+
 Production-ready Model Context Protocol (MCP) server for the [deAPI](https://deapi.ai) REST API. This server exposes all deAPI AI capabilities as MCP tools, enabling LLMs to perform audio transcription, image generation, OCR, video generation, text-to-speech, and more.
 
 > **deAPI v2** — this server targets the deAPI v2 client API (OpenAI-aligned noun paths under `/api/v2/*`). API v1 is not supported: the tools send v2 payloads only.
